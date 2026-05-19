@@ -667,6 +667,76 @@
       return t + e;
     }
 
+		function render() {
+  const root = document.getElementById('root');
+
+  const balance = computeBalance();
+
+  root.innerHTML = `
+    <div class="page">
+
+      <div class="header">
+        <div>
+          <div style="font-weight:600;">Clarito</div>
+          <div class="small muted">Estado del sistema</div>
+        </div>
+      </div>
+
+      <div class="card mb12">
+        <div class="section-label">Balance</div>
+        <div class="row-sb">
+          <div>
+            <div class="small muted">A debe a B</div>
+            <div style="font-weight:600;">${fmt(balance.aOwesB)}</div>
+          </div>
+          <div>
+            <div class="small muted">B debe a A</div>
+            <div style="font-weight:600;">${fmt(balance.bOwesA)}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb12">
+        <div class="section-label">Personas</div>
+        <div class="row-sb gap10">
+          <div class="col">
+            <div style="font-weight:600;">${pA().name || 'Persona A'}</div>
+            <div class="small muted">${pA().id}</div>
+          </div>
+
+          <div class="col">
+            <div style="font-weight:600;">${pB().name || 'Persona B'}</div>
+            <div class="small muted">${pB().id}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-label">Chat IA</div>
+
+        <div class="col gap8">
+          ${S.chatMessages.map(m => `
+            <div class="card-sm">
+              <div class="small muted">${m.role}</div>
+              <div>${m.text}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+    </div>
+  `;
+}
+
+render();
+
+		const _save = save;
+
+save = function () {
+  _save();
+  render();
+};
+
     // Botón API KEY (único y correcto)
     const aiBtn = document.createElement('button');
     aiBtn.id = 'aiKeyBtn';
