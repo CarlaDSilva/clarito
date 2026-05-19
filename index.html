@@ -925,6 +925,8 @@ const STATE = {
   editingPersonId: null, ticketDetailId: null,
 };
 
+let __APP_INIT__ = false;
+
 const COLORS_P1 = ['#7c6af7','#4080ff','#20c0a0','#f0a020','#60d020','#ff6060'];
 const COLORS_P2 = ['#f04090','#e040a0','#ff8040','#c060ff','#40c0e0','#80e040'];
 const ALL_COLORS = [...new Set([...COLORS_P1,...COLORS_P2])];
@@ -942,6 +944,7 @@ const CATEGORIES = [
   { id:'other', icon:'📦', label:'Otro' },
 ];
 const CATEGORY_ICONS = Object.fromEntries(CATEGORIES.map(c => [c.id, c.icon]));
+let uploading = false;
 
 // ── PERSISTENCIA ──
 function save() {
@@ -1405,8 +1408,9 @@ function renderAddTicketModal() {
     document.getElementById('manual-save-btn').addEventListener('click',saveManualTicket);
   }
 }
-
 async function handleFileUpload(file) {
+  if (uploading) return;
+  uploading = true;
   addTicketState.step='processing'; renderAddTicketModal();
   try {
     const base64 = await fileToBase64(file);
@@ -1427,8 +1431,11 @@ async function handleFileUpload(file) {
   } catch(err) {
     setLoadingOverlay(false); addTicketState.step='choose'; renderAddTicketModal();
     showToast('Error al procesar: '+(err.message||'Fallo de red'));
+  } finally {
+  uploading = false;
   }
 }
+
 
 function fileToBase64(file) {
   return new Promise((resolve,reject)=>{ const reader=new FileReader(); reader.onload=e=>resolve(e.target.result); reader.onerror=reject; reader.readAsDataURL(file); });
@@ -1844,7 +1851,10 @@ function openModal(id) { document.getElementById(id).classList.add('visible'); }
 function closeModal(id) { document.getElementById(id).classList.remove('visible'); }
 
 // ── INIT MAIN APP ──
+
 function initMainApp() {
+  if (__APP_INIT__) return;
+  __APP_INIT__ = true;
   applyPersonColors();
   document.querySelectorAll('.nav-item').forEach(item=>{ item.addEventListener('click',()=>navigateTo(item.dataset.nav)); });
   document.getElementById('home-settings-btn').addEventListener('click',()=>{ renderSettings(); showScreen('settings'); });
@@ -1895,7 +1905,10 @@ function initSetupColorPickers() {
   ['#p1-colors','#p2-colors'].forEach(sel=>{ const opts=document.querySelectorAll(`${sel} .color-option`); if(opts.length>0){opts.forEach(o=>o.classList.remove('selected'));opts[0].classList.add('selected');} });
 }
 
-document.addEventListener('DOMContentLoaded',()=>{ initSetupColorPickers(); boot(); });
+if (!window.__BOOTED__) {
+  window.__BOOTED__ = true;
+  document.addEventListener('DOMContentLoaded',()=>{ initSetupColorPickers(); boot(); });
+}
 </script>
 </body>
 </html>
