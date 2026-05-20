@@ -13,17 +13,6 @@
 <link rel="icon" href="icon.png" type="image/png"/>
 <link rel="stylesheet" href="app.css"/>
 <title>Clarito</title>
-
-<!-- Tesseract desde unpkg, más fiable que jsdelivr para WASM -->
-<script>
-  // Configurar rutas de Tesseract ANTES de cargar el script
-  window.TesseractConfig = {
-    workerPath: 'https://unpkg.com/tesseract.js@4.1.1/dist/worker.min.js',
-    langPath:   'https://tessdata.projectnaptha.com/4.0.0',
-    corePath:   'https://unpkg.com/tesseract.js-core@4.0.4/tesseract-core.wasm.js'
-  };
-</script>
-<script src="https://unpkg.com/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 </head>
 <body>
 
