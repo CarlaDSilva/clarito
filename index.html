@@ -899,7 +899,7 @@ function setOCRStatus(msg){document.getElementById('ocr-status').textContent=msg
 function hideOCRLoading(){document.getElementById('ocr-loading').style.display='none';}
 
 // ── GEMINI API ─────────────────────────────────────────────────
-async function callGemini(prompt, base64, mimeType, systemPrompt){
+async function callGemini(prompt, base64, mimeType, systemPrompt, retries=3){
   const key = DB.apiKey;
   if(!key) throw new Error('No hay API key configurada. Ve a Configuración.');
 
@@ -911,65 +911,43 @@ async function callGemini(prompt, base64, mimeType, systemPrompt){
 
   const body = {
     contents:[{role:'user',parts}],
-    generationConfig:{temperature:0.2,maxOutputTokens:4096}
+    generationConfig:{temperature:0.2,maxOutputTokens:2048}
   };
   if(systemPrompt){
     body.system_instruction = {parts:[{text:systemPrompt}]};
   }
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
-  );
-  if(!res.ok){
-    const err = await res.json().catch(()=>({}));
-    throw new Error(err.error?.message||`Error HTTP ${res.status}`);
+  for(let attempt=0; attempt<retries; attempt++){
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
+    );
+    if(res.status===429){
+      const wait = (attempt+1)*15000;
+      setOCRStatus(`Límite de peticiones alcanzado. Reintentando en ${wait/1000}s... (${attempt+1}/${retries})`);
+      await new Promise(r=>setTimeout(r,wait));
+      continue;
+    }
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err.error?.message||`Error HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    return text;
   }
-  const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-  return text;
+  throw new Error('Demasiadas peticiones a la API. Espera un minuto e inténtalo de nuevo.');
 }
 
 async function analyzeTicketWithGemini(base64, mimeType){
-  const knowledgeHint = buildKnowledgeHint();
   const p1=DB.persons[0], p2=DB.persons[1];
-  const prompt = `Eres un asistente experto en analizar tickets de supermercado españoles.
-
-Analiza este ticket y devuelve ÚNICAMENTE un JSON válido con esta estructura exacta (sin texto adicional, sin markdown):
-{
-  "store": "nombre del supermercado",
-  "date": "YYYY-MM-DD",
-  "total": número,
-  "last4": "últimos 4 dígitos de tarjeta o null",
-  "discounts": número total de descuentos aplicados,
-  "products": [
-    {
-      "rawName": "texto original del ticket",
-      "name": "nombre normalizado legible",
-      "price": número precio final tras descuentos,
-      "originalPrice": número precio sin descuento si hubo,
-      "discount": número de descuento o 0,
-      "qty": número de unidades,
-      "confidence": número entre 0 y 1,
-      "category": "alimentación|higiene|limpieza|bebidas|congelados|lácteos|fruta|carne|pescado|otro"
-    }
-  ],
-  "errors": ["lista de errores o problemas detectados"],
-  "warnings": ["lista de avisos"]
-}
-
-Reglas:
-- Normaliza nombres: "SAL TO 500G" → "Salsa de tomate 500g"
-- Detecta descuentos por línea y globales
-- Si un precio no está claro, pon el mejor estimado y confianza baja
-- Categoría es obligatoria siempre
-- Deja date en null si no puedes detectarla
-
-${knowledgeHint}
-
-Personas: ${p1.name} (id: ${p1.id}), ${p2.name} (id: ${p2.id})
-Historial de productos conocidos: ${JSON.stringify(Object.entries(DB.knowledge.products).slice(0,20))}
-`;
+  const knownProds = Object.entries(DB.knowledge.products).slice(0,10)
+    .map(([k,v])=>`${k}:${v.shared?'común':personName(v.person)}`).join(';');
+  const prompt = `Analiza este ticket de supermercado español. Devuelve SOLO JSON sin markdown:
+{"store":"","date":"YYYY-MM-DD","total":0,"last4":null,"products":[{"rawName":"","name":"","price":0,"discount":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|otro"}],"errors":[],"warnings":[]}
+Reglas: normaliza nombres (SAL TO→Salsa tomate), detecta descuentos, date null si no se ve, confidence baja si dudas.
+Productos conocidos: ${knownProds||'ninguno aún'}
+Responde ÚNICAMENTE el JSON.`;
 
   const text = await callGemini(prompt, base64, mimeType);
   try {
