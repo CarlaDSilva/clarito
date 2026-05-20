@@ -143,7 +143,52 @@ function setupNext2(){DB.persons.forEach((p,i)=>{const n=document.getElementById
 function finishSetup(){saveDB();document.getElementById('setup-screen').style.display='none';document.getElementById('app').style.display='flex';showScreen('home');}
 
 // ── IMAGE PROCESSING ───────────────────────────────────────────
-function imageToBase64(file, maxW=900, quality=0.78){
+// gRB: getRawBase64 — escala a max 1000px, escala de grises,
+// alto contraste, JPEG 70%. Optimizado para texto de tickets.
+function gRB(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      const MAX=1000;
+      let w=img.naturalWidth, h=img.naturalHeight;
+      // Scale so longest side ≤ MAX
+      if(w>h){ if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} }
+      else    { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
+      const c=document.createElement('canvas');
+      c.width=w; c.height=h;
+      const ctx=c.getContext('2d');
+      ctx.fillStyle='#fff';
+      ctx.fillRect(0,0,w,h);
+      ctx.drawImage(img,0,0,w,h);
+      // Grayscale + high contrast pixel manipulation
+      const id=ctx.getImageData(0,0,w,h);
+      const d=id.data;
+      const CONTRAST=1.5; // agresivo: texto negro sobre blanco
+      const F=(259*(CONTRAST*255+255))/(255*(259-CONTRAST*255));
+      for(let i=0;i<d.length;i+=4){
+        const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        const v=Math.min(255,Math.max(0,Math.round(F*(gray-128)+128)));
+        d[i]=d[i+1]=d[i+2]=v;
+        // alpha stays 255
+      }
+      ctx.putImageData(id,0,0);
+      // JPEG 70% — texto B&N aguanta bien compresión agresiva
+      res(c.toDataURL('image/jpeg',0.70).split(',')[1]);
+    };
+    img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
+    img.src=url;
+  });
+}
+
+// Thumbnail para historial (más pequeño aún)
+function getThumbnailBase64(file){
+  return imageToBase64(file,300,0.60);
+}
+
+// Mantener imageToBase64 para usos internos genéricos
+function imageToBase64(file,maxW=900,quality=0.78){
   return new Promise((res,rej)=>{
     const url=URL.createObjectURL(file);
     const img=new Image();
@@ -161,66 +206,6 @@ function imageToBase64(file, maxW=900, quality=0.78){
     img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
     img.src=url;
   });
-}
-
-// Returns a base64 data URL for Tesseract (high quality, grayscale enhanced)
-function imageToDataUrl(file, maxW=1600){
-  return new Promise((res,rej)=>{
-    const url=URL.createObjectURL(file);
-    const img=new Image();
-    img.onload=()=>{
-      URL.revokeObjectURL(url);
-      let w=img.naturalWidth,h=img.naturalHeight;
-      if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
-      const c=document.createElement('canvas');
-      c.width=w;c.height=h;
-      const ctx=c.getContext('2d');
-      ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
-      ctx.drawImage(img,0,0,w,h);
-      // Apply contrast enhancement via pixel manipulation for OCR
-      const id=ctx.getImageData(0,0,w,h);
-      const d=id.data;
-      for(let i=0;i<d.length;i+=4){
-        // Grayscale
-        const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-        // Increase contrast: push values toward black or white
-        const contrast=1.4;
-        const factor=(259*(contrast*255+255))/(255*(259-contrast*255));
-        const val=Math.min(255,Math.max(0,factor*(gray-128)+128));
-        d[i]=d[i+1]=d[i+2]=val;
-      }
-      ctx.putImageData(id,0,0);
-      // Return as data URL (Tesseract accepts this reliably)
-      res(c.toDataURL('image/png'));
-    };
-    img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
-    img.src=url;
-  });
-}
-
-// ── TESSERACT OCR ──────────────────────────────────────────────
-async function runTesseract(dataUrl){
-  const T=window.Tesseract;
-  if(!T)throw new Error('Tesseract no cargado');
-  const cfg=window.TesseractConfig||{};
-  const worker=await T.createWorker('eng',1,{
-    workerPath: cfg.workerPath||'https://unpkg.com/tesseract.js@4.1.1/dist/worker.min.js',
-    langPath:   cfg.langPath  ||'https://tessdata.projectnaptha.com/4.0.0',
-    corePath:   cfg.corePath  ||'https://unpkg.com/tesseract.js-core@4.0.4/tesseract-core.wasm.js',
-    logger:m=>{
-      if(m.status==='recognizing text') setOCRStatus('OCR: '+Math.round((m.progress||0)*100)+'%');
-      else if(m.status==='loading tesseract core') setOCRStatus('Cargando motor OCR...');
-      else if(m.status==='loading language traineddata') setOCRStatus('Descargando modelo (primera vez ~10s)...');
-      else if(m.status==='initializing tesseract') setOCRStatus('Iniciando Tesseract...');
-    }
-  });
-  try{
-    // Pass the data URL string directly — this is what Tesseract.js v4 accepts most reliably
-    const {data}=await worker.recognize(dataUrl);
-    return data.text||'';
-  }finally{
-    await worker.terminate();
-  }
 }
 
 // ── JS TICKET PARSER ───────────────────────────────────────────
@@ -999,4 +984,4 @@ setTimeout(()=>{
       updateAIBadge();
     }
   }, 100);
-}, 1400);
+}, 2500);
