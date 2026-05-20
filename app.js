@@ -317,27 +317,50 @@ async function processFile(file){
   }
 }
 
-async function geminiVision(imgBase64){
+async function geminiVision(b64){
   const key=DB.apiKey;
-  if(!key)throw new Error('Sin API key');
-  const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
-  const prompt=`Analiza este ticket de supermercado español. SOLO JSON sin markdown:
-{"store":"","date":"YYYY-MM-DD o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"","name":"nombre legible","price":0,"discount":0,"qty":1,"confidence":0.85,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
-Normaliza nombres.${knownProds?' Conocidos: '+knownProds:''}`;
+  if(!key) throw new Error('Sin API key. Ve a Configuración.');
+  const knownProds=Object.entries(DB.knowledge.products).slice(0,8)
+    .map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
+  const prompt=`Analiza este ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:
+{"store":"","date":"YYYY-MM-DD o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal del ticket","name":"nombre normalizado legible","price":0,"discount":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
+Reglas: normaliza nombres abreviados (SAL TO→Salsa tomate), detecta descuentos, confidence baja si hay dudas.${knownProds?' Productos conocidos: '+knownProds:''}`;
 
-  const body={contents:[{role:'user',parts:[{inline_data:{mime_type:'image/jpeg',data:imgBase64}},{text:prompt}]}],generationConfig:{temperature:0.1,maxOutputTokens:2048}};
+  const body={
+    contents:[{role:'user',parts:[
+      {inline_data:{mime_type:'image/jpeg',data:b64}},
+      {text:prompt}
+    ]}],
+    generationConfig:{temperature:0.1,maxOutputTokens:2048}
+  };
+
   const models=['gemini-2.0-flash-lite','gemini-2.0-flash'];
   for(const model of models){
-    const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(res.status===429){setOCRStatus('Límite API. Esperando 20s...');await new Promise(r=>setTimeout(r,20000));continue;}
-    if(res.status===404)continue;
-    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
-    const data=await res.json();
-    const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-    const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-    try{return JSON.parse(clean);}catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);}
+    for(let attempt=0;attempt<2;attempt++){
+      const res=await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
+      );
+      if(res.status===429){
+        const wait=(attempt+1)*20000;
+        setOCRStatus(`Límite API. Reintentando en ${wait/1000}s...`);
+        await new Promise(r=>setTimeout(r,wait));
+        continue;
+      }
+      if(res.status===404) break;
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
+      const data=await res.json();
+      const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+      const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+      try{return JSON.parse(clean);}
+      catch{
+        const m=clean.match(/\{[\s\S]*\}/);
+        if(m) return JSON.parse(m[0]);
+        throw new Error('La IA no devolvió JSON válido');
+      }
+    }
   }
-  throw new Error('Gemini Vision falló.');
+  throw new Error('No se pudo conectar con Gemini después de varios intentos.');
 }
 
 function applyKnowledgeToProduct(prod){
