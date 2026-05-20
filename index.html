@@ -658,75 +658,85 @@ function guessCat(name){
 async function processFile(file){
   showOCRLoading('Preparando imagen...');
   try{
-    let ocrText='';
     if(file.type==='application/pdf'){
-      setOCRStatus('PDFs: introduce el ticket manualmente.');
       hideOCRLoading();
+      showToast('Los PDFs no son compatibles con OCR. Usa el modo manual.',4000);
       openTicketEditor(getEmptyTicket());
       return;
     }
+
     // 1. Resize → blob URL
     setOCRStatus('Optimizando imagen...');
-    const blobUrl=await resizeImageToBlob(file,1400);
+    const blobUrl = await resizeImageToBlob(file, 1400);
 
     // 2. Tesseract OCR local
     setOCRStatus('Iniciando OCR...');
     let worker;
     try{
-      worker=await Tesseract.createWorker('eng',1,{
-        workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/worker.min.js',
-        langPath:'https://tessdata.projectnaptha.com/4.0.0',
-        corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@4/tesseract-core.wasm.js',
-        logger:m=>{
+      worker = await Tesseract.createWorker('eng', 1, {
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/worker.min.js',
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@4/tesseract-core.wasm.js',
+        logger: m => {
           if(m.status==='recognizing text')
-            setOCRStatus('OCR: '+Math.round((m.progress||0)*100)+'%');
+            setOCRStatus('OCR: ' + Math.round((m.progress||0)*100) + '%');
         }
       });
     }catch(e){
-      throw new Error('No se pudo iniciar Tesseract: '+e.message);
+      throw new Error('No se pudo iniciar Tesseract: ' + e.message);
     }
-    let ocrText='';
+
+    let ocrText = '';
     try{
-      const {data}=await worker.recognize(blobUrl);
-      ocrText=data.text||'';
+      const {data} = await worker.recognize(blobUrl);
+      ocrText = data.text || '';
     }finally{
       await worker.terminate();
       URL.revokeObjectURL(blobUrl);
     }
 
-    if(!ocrText||ocrText.trim().length<20){
-      result=getEmptyTicket();
-      result.errors=['El OCR no extrajo texto suficiente. Revisa la imagen o introduce manualmente.'];
-      hideOCRLoading();openTicketEditor(result);return;
+    if(!ocrText || ocrText.trim().length < 20){
+      const empty = getEmptyTicket();
+      empty.errors = ['El OCR no extrajo texto suficiente. Revisa la imagen o introduce manualmente.'];
+      hideOCRLoading();
+      openTicketEditor(empty);
+      return;
     }
 
     // 3. Local JS parser
     setOCRStatus('Analizando ticket...');
-    let result=parseTicketText(ocrText);
-    result.ocrRaw=ocrText;
+    let result = parseTicketText(ocrText);
+    result.ocrRaw = ocrText;
 
-    // 4. AI fallback only if parser found 0 products
-    if(result.products.length===0&&DB.apiKey){
-      setOCRStatus('Parser falló. Usando IA como respaldo (solo texto)...');
+    // 4. AI fallback only if parser found 0 products AND api key exists
+    if(result.products.length === 0 && DB.apiKey){
+      setOCRStatus('Parser sin resultados. Usando IA (solo texto)...');
       try{
-        result=await analyzeWithGeminiTextOnly(ocrText);
+        const aiResult = await analyzeWithGeminiTextOnly(ocrText);
+        result = aiResult;
+        result.ocrRaw = ocrText;
       }catch(e){
-        result.warnings.push('IA no disponible: '+e.message);
+        result.warnings = result.warnings || [];
+        result.warnings.push('IA no disponible: ' + e.message);
       }
     }
 
-    // 5. Apply knowledge base
-    result.products=result.products.map(p=>applyKnowledgeToProduct(p));
-    result.type='ticket';result.id=uid();
-    result.payer=DB.persons[0].id;result.confirmed=false;
-    result.createdAt=new Date().toISOString();
-    if(result.last4&&DB.knowledge.cards[result.last4]) result.payer=DB.knowledge.cards[result.last4];
+    // 5. Apply knowledge + metadata
+    result.products = (result.products||[]).map(p => applyKnowledgeToProduct(p));
+    result.type = 'ticket';
+    result.id = uid();
+    result.payer = DB.persons[0].id;
+    result.confirmed = false;
+    result.createdAt = new Date().toISOString();
+    if(result.last4 && DB.knowledge.cards[result.last4])
+      result.payer = DB.knowledge.cards[result.last4];
 
     hideOCRLoading();
     openTicketEditor(result);
+
   }catch(err){
     hideOCRLoading();
-    showToast('Error: '+err.message,4000);
+    showToast('Error: ' + err.message, 4000);
     openTicketEditor(getEmptyTicket());
   }
 }
