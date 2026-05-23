@@ -195,28 +195,24 @@ Normaliza nombres abreviados (SAL TO→Salsa tomate). Detecta descuentos. Confid
   };
   const models=['gemini-2.0-flash-lite','gemini-2.0-flash'];
   for(const model of models){
-    for(let attempt=0;attempt<2;attempt++){
-      const res=await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
-      );
-      if(res.status===429){
-        const wait=(attempt+1)*20000;
-        setOCRStatus('Límite API. Reintentando en '+(wait/1000)+'s...');
-        await new Promise(r=>setTimeout(r,wait));
-        continue;
-      }
-      if(res.status===404) break;
-      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
-      const data=await res.json();
-      const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-      const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
-      try{return JSON.parse(clean);}
-      catch{
-        const m=clean.match(/\{[\s\S]*\}/);
-        if(m) return JSON.parse(m[0]);
-        throw new Error('La IA no devolvió JSON válido');
-      }
+    const res=await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
+    );
+    if(res.status===429){
+      // Single wait — don't loop, just tell user and open empty editor
+      throw new Error('Límite de la API gratuita alcanzado. Espera 1 minuto e inténtalo de nuevo.');
+    }
+    if(res.status===404) continue;
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
+    const data=await res.json();
+    const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+    try{return JSON.parse(clean);}
+    catch{
+      const m=clean.match(/\{[\s\S]*\}/);
+      if(m) return JSON.parse(m[0]);
+      throw new Error('La IA no devolvió JSON válido. Introduce el ticket manualmente.');
     }
   }
   throw new Error('No se pudo conectar con Gemini.');
@@ -473,11 +469,26 @@ function renderTicketEditor(){
     </div>`;
 }
 
+// Parsea precio aceptando coma o punto decimal
+function parsePrice(v){
+  return parseFloat(String(v).replace(',','.'))||0;
+}
+
 function renderProductRow(prod,i){
   const confClass=prod.confidence>=0.85?'conf-high':prod.confidence>=0.6?'conf-mid':'conf-low';
   const assignedTo=prod.assignedTo;
   const isShared=!assignedTo;
-  const personBtns=DB.persons.map(p=>{const active=assignedTo===p.id;return`<button class="assign-btn" style="background:${active?p.color+'33':'transparent'};color:${active?p.color:'var(--txt2)'};border-color:${active?p.color:'var(--brd)'};" onclick="assignProduct(${i},'${p.id}')">${p.name}</button>`;}).join('');
+  const price=(prod.finalPrice??prod.price??0);
+  const priceDisplay=price>0?price.toFixed(2):'';
+
+  const personBtns=DB.persons.map(p=>{
+    const active=assignedTo===p.id;
+    return`<button class="assign-btn" style="background:${active?p.color+'33':'transparent'};color:${active?p.color:'var(--txt2)'};border-color:${active?p.color:'var(--brd)'};" onclick="assignProduct(${i},'${p.id}')">${p.name}</button>`;
+  }).join('');
+
+  const pct=prod.pct1||50;
+  const pctLabel=isShared?pct+'%/'+(100-pct)+'%':'';
+
   return`<div class="product-row" id="prod-${i}">
     <div class="product-top">
       <div class="confidence-dot ${confClass}"></div>
@@ -485,12 +496,18 @@ function renderProductRow(prod,i){
         <input value="${prod.name||''}" style="background:transparent;border:none;padding:0;font-size:14px;font-weight:500;color:var(--txt0);width:100%" oninput="currentTicket.products[${i}].name=this.value" placeholder="Nombre del producto"/>
         ${prod.rawName&&prod.rawName!==prod.name?`<div class="product-name-raw">${prod.rawName}</div>`:''}
       </div>
-      <input type="number" value="${(prod.finalPrice??prod.price??0).toFixed(2)}" step="0.01" style="width:68px;text-align:right;font-size:14px;font-weight:700;background:transparent;border:none;padding:0;color:var(--txt0)" oninput="currentTicket.products[${i}].finalPrice=parseFloat(this.value)||0"/>
+      <input class="product-price-input"
+        value="${priceDisplay}"
+        placeholder="0,00"
+        inputmode="decimal"
+        onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
+        onblur="if(!this.value)this.value='0.00';currentTicket.products[${i}].finalPrice=parsePrice(this.value)"
+        oninput="currentTicket.products[${i}].finalPrice=parsePrice(this.value)"/>
     </div>
     <div class="product-bottom">
       ${personBtns}
       <button class="assign-btn" style="background:${isShared?'rgba(74,158,255,.15)':'transparent'};color:${isShared?'#4a9eff':'var(--txt2)'};border-color:${isShared?'#4a9eff':'var(--brd)'};" onclick="assignProduct(${i},null)">Común</button>
-      ${isShared?`<button class="share-btn active" onclick="editSplit(${i})">${prod.pct1||50}/${100-(prod.pct1||50)}</button>`:''}
+      ${isShared?`<button class="pct-badge active" onclick="editSplit(${i})">${pctLabel}</button>`:''}
       <button onclick="removeProduct(${i})" style="margin-left:auto;color:var(--txt3);font-size:20px;line-height:1">×</button>
     </div>
   </div>`;
