@@ -17,6 +17,7 @@ const PRESET_COLORS = [
 
 let DB = {
   apiKey:'',
+  ocrKey:'helloworld',
   persons:[
     {id:'p1',name:'Persona 1',color:'#7c6ef5',cards:[]},
     {id:'p2',name:'Persona 2',color:'#3ecf8e',cards:[]}
@@ -30,6 +31,7 @@ function loadDB(){
   const saved=S.get('db');
   if(saved) DB=Object.assign({},DB,saved);
   DB.apiKey=S.get('apiKey')||DB.apiKey||'';
+  DB.ocrKey=S.get('ocrKey')||DB.ocrKey||'helloworld';
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.aiQuestions) DB.aiQuestions=[];
   if(!DB.aiConvMessages) DB.aiConvMessages=[];
@@ -95,12 +97,17 @@ function renderSetupStep(){
   if(setupStep===0){
     html+=`
       <h2>Bienvenido a Clarito</h2>
-      <p>Necesitas una API Key de Google AI Studio para analizar tickets con IA. Es <strong>completamente gratuita</strong>.</p>
+      <p>Necesitas una API Key de Google AI Studio para el asistente IA. Es <strong>completamente gratuita</strong>.</p>
       <div class="field-row">
         <label class="field-label">API Key de Gemini</label>
         <input type="password" id="s-apikey" placeholder="AIza..." value="${DB.apiKey||''}"/>
       </div>
-      <p style="font-size:12px;color:var(--txt2);margin-bottom:20px">Obtén tu key en <strong style="color:var(--accent)">aistudio.google.com</strong> → Get API Key</p>
+      <p style="font-size:12px;color:var(--txt2);margin-bottom:8px">Obtén tu key en <strong style="color:var(--accent)">aistudio.google.com</strong> → Get API Key</p>
+      <div class="field-row" style="margin-top:12px">
+        <label class="field-label">API Key de OCR.space <span style="color:var(--txt3)">(para leer tickets)</span></label>
+        <input type="password" id="s-ocrkey" placeholder="helloworld" value="${DB.ocrKey||'helloworld'}"/>
+      </div>
+      <p style="font-size:12px;color:var(--txt2);margin-bottom:20px">Key gratuita en <strong style="color:var(--accent)">ocr.space/ocrapi</strong> · Por ahora puedes dejar <em>helloworld</em></p>
       <button class="btn-primary" onclick="setupNext0()">Continuar →</button>`;
   } else if(setupStep===1){
     html+=`
@@ -137,20 +144,27 @@ function renderSetupStep(){
 }
 
 function pickColor(idx,color,el){DB.persons[idx].color=color;document.querySelectorAll(`#cp-${idx} .color-swatch`).forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
-function setupNext0(){const key=document.getElementById('s-apikey').value.trim();if(!key){showToast('Introduce tu API key');return;}DB.apiKey=key;S.set('apiKey',key);setupStep=1;renderSetupStep();}
+function setupNext0(){
+  const key=document.getElementById('s-apikey').value.trim();
+  const ocrKey=document.getElementById('s-ocrkey').value.trim();
+  if(!key){showToast('Introduce tu API key de Gemini');return;}
+  DB.apiKey=key;S.set('apiKey',key);
+  DB.ocrKey=ocrKey||'helloworld';S.set('ocrKey',DB.ocrKey);
+  setupStep=1;renderSetupStep();
+}
 function setupNext1(){setupStep=2;renderSetupStep();}
 function setupNext2(){DB.persons.forEach((p,i)=>{const n=document.getElementById('s-name-'+i)?.value.trim();if(n)p.name=n;});setupStep=3;renderSetupStep();}
 function finishSetup(){saveDB();document.getElementById('setup-screen').style.display='none';document.getElementById('app').style.display='flex';showScreen('home');}
 
-// ── IMAGE: gRB ─────────────────────────────────────────────────
-// Escala a max 1000px por lado, escala de grises, contraste alto, JPEG 70%
-function gRB(file){
+// ── IMAGE RESIZE ────────────────────────────────────────────────
+// Escala a max 1000px, para OCR.space preferimos JPEG limpio y claro
+function resizeForOCR(file){
   return new Promise((res,rej)=>{
     const url=URL.createObjectURL(file);
     const img=new Image();
     img.onload=()=>{
       URL.revokeObjectURL(url);
-      const MAX=600;
+      const MAX=1000;
       let w=img.naturalWidth,h=img.naturalHeight;
       if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}
       else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}
@@ -160,79 +174,223 @@ function gRB(file){
       ctx.fillStyle='#fff';
       ctx.fillRect(0,0,w,h);
       ctx.drawImage(img,0,0,w,h);
+      // Aumentar contraste para mejor OCR
       const id=ctx.getImageData(0,0,w,h);
       const d=id.data;
-      const F=(259*(1.5*255+255))/(255*(259-1.5*255));
       for(let i=0;i<d.length;i+=4){
-        const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-        const v=Math.min(255,Math.max(0,Math.round(F*(g-128)+128)));
+        const g=Math.round(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);
+        const v=Math.min(255,Math.max(0,Math.round((g-128)*1.4+128)));
         d[i]=d[i+1]=d[i+2]=v;
       }
       ctx.putImageData(id,0,0);
-      res(c.toDataURL('image/jpeg',0.70).split(',')[1]);
+      res(c.toDataURL('image/jpeg',0.85).split(',')[1]);
     };
     img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
     img.src=url;
   });
 }
 
-async function geminiVision(b64){
-  const key=DB.apiKey;
-  if(!key) throw new Error('Sin API key. Ve a Configuración.');
+// ── OCR.SPACE ──────────────────────────────────────────────────
+async function ocrSpaceExtract(b64){
+  const key=DB.ocrKey||'helloworld';
+  const formData=new FormData();
+  formData.append('base64Image','data:image/jpeg;base64,'+b64);
+  formData.append('language','spa');
+  formData.append('isOverlayRequired','false');
+  formData.append('detectOrientation','true');
+  formData.append('scale','true');
+  formData.append('OCREngine','2'); // Engine 2 es mejor para tickets
 
-  console.log('geminiVision START, key ends:', key.slice(-4));
+  const res=await fetch('https://api.ocr.space/parse/image',{
+    method:'POST',
+    headers:{'apikey':key},
+    body:formData
+  });
+
+  if(!res.ok) throw new Error('OCR.space HTTP '+res.status);
+  const data=await res.json();
+  if(data.IsErroredOnProcessing) throw new Error(data.ErrorMessage?.[0]||'Error OCR');
+  const text=(data.ParsedResults||[]).map(r=>r.ParsedText||'').join('\n');
+  if(!text.trim()) throw new Error('No se detectó texto en la imagen');
+  console.log('OCR texto extraído:', text.slice(0,300));
+  return text;
+}
+
+// ── TICKET TEXT PARSER ─────────────────────────────────────────
+// Interpreta el texto plano de un ticket español
+function parseTicketText(text){
+  const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);
+
+  // ── Detectar tienda ──
+  const STORES=['mercadona','lidl','aldi','carrefour','dia','eroski','alcampo','consum',
+    'hipercor','el corte ingles','supercor','spar','froiz','ahorramas','bonarea'];
+  let store='';
+  for(const l of lines.slice(0,5)){
+    const low=l.toLowerCase();
+    const found=STORES.find(s=>low.includes(s));
+    if(found){store=found.charAt(0).toUpperCase()+found.slice(1);break;}
+    if(!store&&l.length>3&&l.length<30&&/^[A-ZÁÉÍÓÚÑ\s]+$/.test(l)) store=l;
+  }
+
+  // ── Detectar fecha ──
+  let date=null;
+  const dateRx=[
+    /(\d{2})[\/\-\.](\d{2})[\/\-\.](\d{2,4})/,
+    /(\d{1,2})\s+(?:ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)\w*\s+(\d{2,4})/i
+  ];
+  for(const l of lines){
+    for(const rx of dateRx){
+      const m=l.match(rx);
+      if(m){
+        try{
+          let [,a,b,c]=m;
+          if(c&&c.length===2) c='20'+c;
+          const d=new Date(`${c}-${b.padStart(2,'0')}-${a.padStart(2,'0')}`);
+          if(!isNaN(d)){date=d.toISOString().slice(0,10);break;}
+        }catch{}
+      }
+    }
+    if(date) break;
+  }
+
+  // ── Detectar total ──
+  let total=0;
+  const totalRx=/(?:total|importe|a\s*pagar|sum)[^\d]*(\d+[.,]\d{2})/i;
+  for(const l of [...lines].reverse()){
+    const m=l.match(totalRx);
+    if(m){total=parseFloat(m[1].replace(',','.'));break;}
+  }
+  // Fallback: mayor precio encontrado
+  if(!total){
+    const prices=lines.map(l=>{const m=l.match(/(\d+)[,.](\d{2})\s*€?$/);return m?parseFloat(m[1]+'.'+m[2]):0;});
+    total=Math.max(...prices,0);
+  }
+
+  // ── Detectar últimos 4 dígitos tarjeta ──
+  let last4=null;
+  for(const l of lines){
+    const m=l.match(/[*xX•]{4,}\s*(\d{4})/)||l.match(/tarjeta[^\d]*(\d{4})/i)||l.match(/VISA[^\d]*(\d{4})/i);
+    if(m){last4=m[1];break;}
+  }
+
+  // ── Detectar productos ──
+  // Patrón: línea con texto + precio al final
+  const SKIP_RX=/total|subtotal|iva|importe|tarjeta|visa|mastercard|cambio|efectivo|gracias|ticket|fecha|hora|caja|operador|ticket|factura|nif|cif|www\.|https?:/i;
+  const PRICE_RX=/^(.+?)\s+(\d{1,3}[.,]\d{2})\s*€?\s*$/;
+  const PRICE_RX2=/^(.+?)\s+(\d+)\s+[xX*]\s+(\d+[.,]\d{2})\s+(\d+[.,]\d{2})\s*$/; // qty x unit = total
+
+  const products=[];
+  for(const line of lines){
+    if(SKIP_RX.test(line)) continue;
+    if(line.length<3||line.length>80) continue;
+
+    let name='',price=0,qty=1;
+
+    // Formato: NOMBRE  QTY x UNIT  TOTAL
+    const m2=line.match(PRICE_RX2);
+    if(m2){
+      name=m2[1].trim();
+      qty=parseInt(m2[2])||1;
+      price=parseFloat(m2[4].replace(',','.'));
+    } else {
+      const m=line.match(PRICE_RX);
+      if(!m) continue;
+      name=m[1].trim();
+      price=parseFloat(m[2].replace(',','.'));
+    }
+
+    if(price<=0||price>500) continue;
+    if(name.length<2) continue;
+    // Filtrar líneas que son solo números o símbolos
+    if(/^\d+$/.test(name)||/^[^\w]+$/.test(name)) continue;
+
+    const catGuess=guessCategory(name);
+    products.push({
+      rawName:name,
+      name:normalizeProdName(name),
+      price,
+      finalPrice:price,
+      discount:0,
+      qty,
+      confidence: name.length>3&&price>0.1 ? 0.75 : 0.5,
+      category:catGuess,
+      assignedTo:null,
+      shared:true,
+      pct1:50
+    });
+  }
+
+  return{store,date,total,last4,products,errors:[],warnings:[]};
+}
+
+function normalizeProdName(raw){
+  // Expande abreviaturas comunes de supermercados españoles
+  return raw
+    .replace(/\bLT\b/gi,'litro')
+    .replace(/\bKG\b/gi,'kg')
+    .replace(/\bGR?\b/gi,'g')
+    .replace(/\bUN\b/gi,'unidad')
+    .replace(/\bBOT\b/gi,'botella')
+    .replace(/\bPK\b/gi,'pack')
+    .replace(/\bFRD\b/gi,'fresa')
+    .replace(/\bTO\b$/gi,'tomate')
+    .replace(/\bSAL\s+TO\b/gi,'salsa tomate')
+    .replace(/\bMERCAD\b/gi,'Mercadona')
+    .replace(/([a-záéíóúñ])([A-ZÁÉÍÓÚÑ])/g,'$1 $2') // CamelCase → palabras
+    .toLowerCase()
+    .replace(/^\w/,c=>c.toUpperCase())
+    .trim();
+}
+
+function guessCategory(name){
+  const n=name.toLowerCase();
+  if(/leche|yogur|queso|mantequilla|nata|kefir/.test(n)) return 'lácteos';
+  if(/cerveza|agua|refresco|zumo|vino|cava|whisky|ron|gin|vodka/.test(n)) return 'bebidas';
+  if(/pollo|carne|ternera|cerdo|salchich|jamón|chorizo|longaniza|pavo|cordero/.test(n)) return 'carne';
+  if(/merluza|salmon|atún|bacalao|dorada|lubina|gamba|mejillon|calamar/.test(n)) return 'pescado';
+  if(/manzana|pera|naranja|plátano|fresa|uva|melocoton|mandarina|limón|kiwi/.test(n)) return 'fruta';
+  if(/lechuga|tomate|patata|cebolla|zanahoria|pimiento|calabacin|espinaca|brócoli/.test(n)) return 'fruta';
+  if(/helado|pizza|croqueta|nugget|varitas/.test(n)) return 'congelados';
+  if(/gel|champú|jabón|pasta\s*dent|colonia|desodorante|crema|maquillaje/.test(n)) return 'higiene';
+  if(/lejia|suavizante|detergente|fregasuelos|bayeta|estropajo|bolsa\s*basura/.test(n)) return 'limpieza';
+  if(/pan|aceite|arroz|pasta|harina|azucar|sal|vinagre|conserva|lata|bote|galleta|chocolate/.test(n)) return 'alimentación';
+  return 'alimentación';
+}
+
+// ── GEMINI FALLBACK (texto) ─────────────────────────────────────
+// Solo se usa si OCR.space falla O si el parser saca <2 productos
+async function geminiParseText(ocrText){
+  const key=DB.apiKey;
+  if(!key) throw new Error('Sin API key Gemini');
 
   const knownProds=Object.entries(DB.knowledge.products).slice(0,8)
     .map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
-  const prompt=`Analiza este ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:
-{"store":"","date":"YYYY-MM-DD o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal del ticket","name":"nombre normalizado legible","price":0,"discount":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
-Normaliza nombres abreviados (SAL TO→Salsa tomate). Detecta descuentos. Confidence baja si hay dudas.${knownProds?' Conocidos: '+knownProds:''}`;
+
+  const prompt=`Analiza este texto extraído de un ticket de supermercado español. Devuelve SOLO JSON sin markdown:
+{"store":"","date":"YYYY-MM-DD o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre normalizado","price":0,"discount":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
+Texto del ticket:
+${ocrText}
+${knownProds?' Productos conocidos: '+knownProds:''}`;
 
   const body={
-    contents:[{role:'user',parts:[
-      {inline_data:{mime_type:'image/jpeg',data:b64}},
-      {text:prompt}
-    ]}],
+    contents:[{role:'user',parts:[{text:prompt}]}],
     generationConfig:{temperature:0.1,maxOutputTokens:2048}
   };
 
-  let bodyStr;
-  try{
-    bodyStr=JSON.stringify(body);
-    console.log('Body serializado OK, chars:', bodyStr.length);
-  }catch(e){
-    console.error('Error serializando body:', e);
-    throw new Error('Error preparando petición: '+e.message);
-  }
-
-  console.log('Iniciando fetch...');
-  let res;
-  try{
-    res=await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
-      {method:'POST',headers:{'Content-Type':'application/json'},body:bodyStr}
-    );
-    console.log('Fetch OK, status:', res.status);
-  }catch(fetchErr){
-    console.error('Fetch falló:', fetchErr.name, fetchErr.message, fetchErr);
-    throw new Error('Fetch falló ('+fetchErr.name+'): '+fetchErr.message);
-  }
-
-  if(res.status===429) throw new Error('Límite de API alcanzado. Espera 1 minuto e inténtalo de nuevo.');
+  const res=await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
+  );
+  if(res.status===429) throw new Error('Límite Gemini. Espera 1 minuto.');
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
-
   const data=await res.json();
   const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
   const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
   try{return JSON.parse(clean);}
-  catch{
-    const m=clean.match(/\{[\s\S]*\}/);
-    if(m) return JSON.parse(m[0]);
-    throw new Error('La IA no devolvió JSON válido. Introduce el ticket manualmente.');
-  }
+  catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSON inválido de Gemini');}
 }
 
-// ── GEMINI TEXTO — exactamente 1 petición ──────────────────────
+// ── GEMINI TEXTO (chat IA) ──────────────────────────────────────
 async function callGemini(prompt){
   const key=DB.apiKey;
   if(!key) throw new Error('No hay API key. Ve a Configuración.');
@@ -240,14 +398,10 @@ async function callGemini(prompt){
     contents:[{role:'user',parts:[{text:prompt}]}],
     generationConfig:{temperature:0.2,maxOutputTokens:1024}
   };
-  // 1 sola petición, sin reintentos, sin fallback de modelo
   const res=await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
     {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
-  ).catch(fetchErr=>{
-    console.error('Fetch bloqueado:', fetchErr.name, fetchErr.message);
-    throw new Error('Red bloqueada ('+fetchErr.name+')');
-  });
+  ).catch(fetchErr=>{throw new Error('Red bloqueada ('+fetchErr.name+')');});
   if(res.status===429) throw new Error('Límite de API alcanzado. Espera 1 minuto.');
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
   const data=await res.json();
@@ -264,23 +418,64 @@ async function processFile(file){
       openTicketEditor(getEmptyTicket());
       return;
     }
-    if(!DB.apiKey){
+
+    setOCRStatus('Optimizando imagen...');
+    const b64=await resizeForOCR(file);
+    const sizeKB=Math.round(b64.length*0.75/1024);
+    console.log('Imagen lista:', sizeKB, 'KB');
+
+    // ── PASO 1: OCR.space extrae texto ──
+    let ocrText='';
+    try{
+      setOCRStatus('Leyendo texto del ticket (OCR)...');
+      ocrText=await ocrSpaceExtract(b64);
+    }catch(ocrErr){
+      console.warn('OCR.space falló:', ocrErr.message);
+      setOCRStatus('OCR falló, usando IA directamente...');
+    }
+
+    let result;
+
+    if(ocrText){
+      // ── PASO 2: Parser local ──
+      setOCRStatus('Interpretando ticket...');
+      result=parseTicketText(ocrText);
+      console.log('Parser local:', result.products.length, 'productos');
+
+      // ── PASO 3: Si el parser saca pocos productos y hay API key, mejora con Gemini ──
+      if(result.products.length<2&&DB.apiKey){
+        setOCRStatus('Mejorando con IA...');
+        try{
+          const geminiResult=await geminiParseText(ocrText);
+          // Fusionar: Gemini manda en productos, pero mantenemos store/date/total del parser si Gemini no los detectó
+          result.products=geminiResult.products||result.products;
+          if(geminiResult.store) result.store=geminiResult.store;
+          if(geminiResult.date) result.date=geminiResult.date;
+          if(geminiResult.total&&geminiResult.total>0) result.total=geminiResult.total;
+          if(geminiResult.last4) result.last4=geminiResult.last4;
+          result.warnings=[...(result.warnings||[]),...(geminiResult.warnings||[])];
+          console.log('Gemini mejoró a:', result.products.length, 'productos');
+        }catch(gemErr){
+          console.warn('Gemini fallback falló:', gemErr.message);
+          result.warnings.push('IA no disponible: '+gemErr.message);
+        }
+      }
+    } else if(DB.apiKey){
+      // Sin OCR text, intentar con Gemini Vision como último recurso
+      // (esto requiere el endpoint vision, que consume más cuota)
+      setOCRStatus('Sin texto OCR. Introduce el ticket manualmente.');
       hideOCRLoading();
-      showToast('Configura tu API key de Gemini primero.',4000);
+      showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);
+      openTicketEditor(getEmptyTicket());
+      return;
+    } else {
+      hideOCRLoading();
+      showToast('OCR falló y no hay API key de Gemini. Introduce manualmente.',4000);
       openTicketEditor(getEmptyTicket());
       return;
     }
-    setOCRStatus('Optimizando imagen...');
-    const b64=await gRB(file);
-    const sizeKB=Math.round(b64.length*0.75/1024);
-    console.log('Imagen procesada:', sizeKB, 'KB', '| b64 chars:', b64.length);
-    if(sizeKB>800){
-      // Safari iOS tiene problemas con payloads muy grandes en fetch
-      // Recomprimir más agresivamente
-      showToast('Imagen grande ('+sizeKB+'KB), recomprimiendo...',2000);
-    }
-    setOCRStatus('Analizando ticket con IA ('+sizeKB+' KB)...');
-    const result=await geminiVision(b64);
+
+    // ── Enriquecer con conocimiento previo ──
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';
     result.id=uid();
@@ -289,8 +484,10 @@ async function processFile(file){
     result.createdAt=new Date().toISOString();
     if(result.last4&&DB.knowledge.cards[result.last4])
       result.payer=DB.knowledge.cards[result.last4];
+
     hideOCRLoading();
     openTicketEditor(result);
+
   }catch(err){
     hideOCRLoading();
     showToast('Error: '+err.message,5000);
@@ -492,10 +689,7 @@ function renderTicketEditor(){
     </div>`;
 }
 
-// Parsea precio aceptando coma o punto decimal
-function parsePrice(v){
-  return parseFloat(String(v).replace(',','.'))||0;
-}
+function parsePrice(v){return parseFloat(String(v).replace(',','.'))||0;}
 
 function renderProductRow(prod,i){
   const confClass=prod.confidence>=0.85?'conf-high':prod.confidence>=0.6?'conf-mid':'conf-low';
@@ -510,7 +704,6 @@ function renderProductRow(prod,i){
   }).join('');
 
   const pct=prod.pct1||50;
-  const pctLabel=isShared?'%':'';
 
   return`<div class="product-row" id="prod-${i}">
     <div class="product-top">
@@ -530,7 +723,7 @@ function renderProductRow(prod,i){
     <div class="product-bottom">
       ${personBtns}
       <button class="assign-btn" style="background:${isShared?'rgba(74,158,255,.15)':'transparent'};color:${isShared?'#4a9eff':'var(--txt2)'};border-color:${isShared?'#4a9eff':'var(--brd)'};" onclick="assignProduct(${i},null)">Común</button>
-      ${isShared?`<button class="pct-badge active" onclick="editSplit(${i})">${pctLabel}</button>`:''}
+      ${isShared?`<button class="pct-badge active" onclick="editSplit(${i})">%</button>`:''}
       <button onclick="removeProduct(${i})" style="margin-left:auto;color:var(--txt3);font-size:20px;line-height:1">×</button>
     </div>
   </div>`;
@@ -737,9 +930,10 @@ function renderSettings(){
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">API Key</div>
+      <div class="settings-section-title">APIs</div>
       <div style="background:var(--bg1)">
         <div class="settings-row" onclick="editApiKey()"><div class="settings-icon" style="background:#374151"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div><div class="settings-label">Gemini API Key</div><div class="settings-value">${DB.apiKey?'•••'+DB.apiKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
+        <div class="settings-row" onclick="editOcrKey()"><div class="settings-icon" style="background:#1a3a2a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3M7 12h3M7 16h3M14 8h3M14 12h3M14 16h3"/></svg></div><div class="settings-label">OCR.space Key</div><div class="settings-value">${DB.ocrKey&&DB.ocrKey!=='helloworld'?'•••'+DB.ocrKey.slice(-4):'Demo (helloworld)'}</div><div class="settings-arrow">›</div></div>
       </div>
     </div>
     <div class="settings-section">
@@ -785,6 +979,7 @@ function savePerson(idx){const n=document.getElementById('ep-name').value.trim()
 function forgetCard(l4){delete DB.knowledge.cards[l4];saveDB();renderSettings();}
 function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimiento?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">Se eliminan los productos aprendidos. Los tickets se conservan.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="DB.knowledge.products={};saveDB();closeModal();renderSettings();showToast('Borrado')">Borrar</button></div>`);}
 function editApiKey(){openModal(`<div class="modal-title">API Key de Gemini</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key gratuita en aistudio.google.com</p><input type="password" id="new-apikey" value="${DB.apiKey||''}" placeholder="AIza..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-apikey').value.trim();if(!k)return;DB.apiKey=k;S.set('apiKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
+function editOcrKey(){openModal(`<div class="modal-title">API Key de OCR.space</div><p style="font-size:13px;color:var(--txt2);margin-bottom:4px">Key gratuita en <strong style="color:var(--accent)">ocr.space/ocrapi</strong></p><p style="font-size:12px;color:var(--txt3);margin-bottom:12px">Deja <em>helloworld</em> para usar la key demo (limitada)</p><input type="password" id="new-ocrkey" value="${DB.ocrKey||'helloworld'}" placeholder="helloworld"/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-ocrkey').value.trim()||'helloworld';DB.ocrKey=k;S.set('ocrKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
 function exportData(){const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='clarito-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
 function resetAll(){openModal(`<div class="modal-title">⚠️ ¿Borrar todo?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">No se puede deshacer.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="localStorage.clear();location.reload()">Borrar todo</button></div>`);}
 
@@ -855,7 +1050,7 @@ loadDB();
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
-    if(!DB.apiKey){
+    if(!DB.apiKey&&DB.ocrKey==='helloworld'){
       startSetup();
     }else{
       document.getElementById('app').style.display='flex';
