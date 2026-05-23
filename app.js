@@ -176,10 +176,12 @@ function gRB(file){
   });
 }
 
-// ── GEMINI VISION — exactamente 1 petición ─────────────────────
 async function geminiVision(b64){
   const key=DB.apiKey;
   if(!key) throw new Error('Sin API key. Ve a Configuración.');
+
+  console.log('geminiVision START, key ends:', key.slice(-4));
+
   const knownProds=Object.entries(DB.knowledge.products).slice(0,8)
     .map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
   const prompt=`Analiza este ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:
@@ -194,16 +196,31 @@ Normaliza nombres abreviados (SAL TO→Salsa tomate). Detecta descuentos. Confid
     generationConfig:{temperature:0.1,maxOutputTokens:2048}
   };
 
-  // 1 sola petición, 1 solo modelo, sin reintentos
-  const res=await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
-  ).catch(fetchErr=>{
-    console.error('Fetch bloqueado:', fetchErr.name, fetchErr.message);
-    throw new Error('Red bloqueada ('+fetchErr.name+'): comprueba WiFi, VPN o restricciones de Safari.');
-  });
+  let bodyStr;
+  try{
+    bodyStr=JSON.stringify(body);
+    console.log('Body serializado OK, chars:', bodyStr.length);
+  }catch(e){
+    console.error('Error serializando body:', e);
+    throw new Error('Error preparando petición: '+e.message);
+  }
+
+  console.log('Iniciando fetch...');
+  let res;
+  try{
+    res=await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:bodyStr}
+    );
+    console.log('Fetch OK, status:', res.status);
+  }catch(fetchErr){
+    console.error('Fetch falló:', fetchErr.name, fetchErr.message, fetchErr);
+    throw new Error('Fetch falló ('+fetchErr.name+'): '+fetchErr.message);
+  }
+
   if(res.status===429) throw new Error('Límite de API alcanzado. Espera 1 minuto e inténtalo de nuevo.');
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
+
   const data=await res.json();
   const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
   const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
