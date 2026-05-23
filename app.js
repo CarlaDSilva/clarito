@@ -274,53 +274,73 @@ function parseTicketText(text){
   }
 
   // ── Detectar productos ──
-  // Patrón: línea con texto + precio al final
-  const SKIP_RX=/total|subtotal|iva|importe|tarjeta|visa|mastercard|cambio|efectivo|gracias|ticket|fecha|hora|caja|operador|ticket|factura|nif|cif|www\.|https?:/i;
-  const PRICE_RX=/^(.+?)\s+(\d{1,3}[.,]\d{2})\s*€?\s*$/;
-  const PRICE_RX2=/^(.+?)\s+(\d+)\s+[xX*]\s+(\d+[.,]\d{2})\s+(\d+[.,]\d{2})\s*$/; // qty x unit = total
+  const SKIP_RX=/^(total|subtotal|iva|importe|a pagar|tarjeta|visa|mastercard|cambio|efectivo|gracias|ticket|fecha|hora|caja|operador|factura|nif|cif|www\.|https?:|descripci|p\.\s*unit|imp\.|entrega|op:|telef)/i;
+  const PRICE_ONLY_RX=/^\s*(\d{1,3}[.,]\d{2})\s*€?\s*$/; // línea que es solo un precio
+  const INLINE_PRICE_RX=/^(.+?)\s{2,}(\d{1,3}[.,]\d{2})\s*€?\s*$/; // nombre  precio en misma línea
+  const QTY_PREFIX_RX=/^(\d+)\s+(.+)/; // "2 SALMOREJO FRESCO"
 
   const products=[];
-  for(const line of lines){
-    if(SKIP_RX.test(line)) continue;
-    if(line.length<3||line.length>80) continue;
+  let i=0;
+  while(i<lines.length){
+    const line=lines[i];
+    i++;
 
-    let name='',price=0,qty=1;
+    if(SKIP_RX.test(line.trim())) continue;
+    if(line.trim().length<3) continue;
 
-    // Formato: NOMBRE  QTY x UNIT  TOTAL
-    const m2=line.match(PRICE_RX2);
-    if(m2){
-      name=m2[1].trim();
-      qty=parseInt(m2[2])||1;
-      price=parseFloat(m2[4].replace(',','.'));
-    } else {
-      const m=line.match(PRICE_RX);
-      if(!m) continue;
-      name=m[1].trim();
-      price=parseFloat(m[2].replace(',','.'));
+    // Formato inline: NOMBRE    1,45
+    const inlineM=line.match(INLINE_PRICE_RX);
+    if(inlineM){
+      const rawName=inlineM[1].trim();
+      const price=parseFloat(inlineM[2].replace(',','.'));
+      if(price>0&&price<=500&&rawName.length>=2&&!/^\d+$/.test(rawName)){
+        const qm=rawName.match(QTY_PREFIX_RX);
+        const qty=qm?parseInt(qm[1]):1;
+        const name=qm?qm[2]:rawName;
+        products.push(makeProduct(name,rawName,price,qty));
+      }
+      continue;
     }
 
-    if(price<=0||price>500) continue;
-    if(name.length<2) continue;
-    // Filtrar líneas que son solo números o símbolos
-    if(/^\d+$/.test(name)||/^[^\w]+$/.test(name)) continue;
-
-    const catGuess=guessCategory(name);
-    products.push({
-      rawName:name,
-      name:normalizeProdName(name),
-      price,
-      finalPrice:price,
-      discount:0,
-      qty,
-      confidence: name.length>3&&price>0.1 ? 0.75 : 0.5,
-      category:catGuess,
-      assignedTo:null,
-      shared:true,
-      pct1:50
-    });
+    // Formato Mercadona: línea con nombre, siguiente línea con precio total
+    // "2 SALMOREJO FRESCO\n1,25\n2,50"  → precio total es el segundo (2,50)
+    // "1 TORTILLA\n4,50" → precio es el primero
+    const isProductLine=!PRICE_ONLY_RX.test(line)&&line.trim().length>=3&&!/^\d{1,2}\/\d{2}\/\d{2,4}/.test(line);
+    if(isProductLine){
+      // Recoge precios en líneas siguientes (mientras sean solo precio)
+      const priceLines=[];
+      while(i<lines.length&&PRICE_ONLY_RX.test(lines[i])){
+        priceLines.push(parseFloat(lines[i].replace(',','.')));
+        i++;
+      }
+      if(priceLines.length>0){
+        // El precio total es el mayor (cuando hay qty>1, aparece precio unit y precio total)
+        const price=Math.max(...priceLines);
+        const rawName=line.trim();
+        if(SKIP_RX.test(rawName)) continue;
+        if(rawName.length<2) continue;
+        const qm=rawName.match(QTY_PREFIX_RX);
+        const qty=qm?parseInt(qm[1]):1;
+        const name=qm?qm[2]:rawName;
+        if(!/^\d+$/.test(name)&&name.length>=2)
+          products.push(makeProduct(name,rawName,price,qty));
+      }
+    }
   }
 
   return{store,date,total,last4,products,errors:[],warnings:[]};
+}
+
+function makeProduct(name,rawName,price,qty=1){
+  return{
+    rawName,
+    name:normalizeProdName(name),
+    price,finalPrice:price,discount:0,qty,
+    confidence:name.length>3&&price>0.1?0.8:0.5,
+    category:guessCategory(name),
+    assignedTo:null,shared:true,pct1:50
+  };
+}
 }
 
 function normalizeProdName(raw){
