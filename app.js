@@ -142,9 +142,8 @@ function setupNext1(){setupStep=2;renderSetupStep();}
 function setupNext2(){DB.persons.forEach((p,i)=>{const n=document.getElementById('s-name-'+i)?.value.trim();if(n)p.name=n;});setupStep=3;renderSetupStep();}
 function finishSetup(){saveDB();document.getElementById('setup-screen').style.display='none';document.getElementById('app').style.display='flex';showScreen('home');}
 
-// ── IMAGE PROCESSING ───────────────────────────────────────────
-// gRB: getRawBase64 — escala a max 1000px, escala de grises,
-// alto contraste, JPEG 70%. Optimizado para texto de tickets.
+// ── IMAGE: gRB ─────────────────────────────────────────────────
+// Escala a max 1000px por lado, escala de grises, contraste alto, JPEG 70%
 function gRB(file){
   return new Promise((res,rej)=>{
     const url=URL.createObjectURL(file);
@@ -152,29 +151,24 @@ function gRB(file){
     img.onload=()=>{
       URL.revokeObjectURL(url);
       const MAX=1000;
-      let w=img.naturalWidth, h=img.naturalHeight;
-      // Scale so longest side ≤ MAX
-      if(w>h){ if(w>MAX){h=Math.round(h*MAX/w);w=MAX;} }
-      else    { if(h>MAX){w=Math.round(w*MAX/h);h=MAX;} }
+      let w=img.naturalWidth,h=img.naturalHeight;
+      if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}
+      else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}
       const c=document.createElement('canvas');
-      c.width=w; c.height=h;
+      c.width=w;c.height=h;
       const ctx=c.getContext('2d');
       ctx.fillStyle='#fff';
       ctx.fillRect(0,0,w,h);
       ctx.drawImage(img,0,0,w,h);
-      // Grayscale + high contrast pixel manipulation
       const id=ctx.getImageData(0,0,w,h);
       const d=id.data;
-      const CONTRAST=1.5; // agresivo: texto negro sobre blanco
-      const F=(259*(CONTRAST*255+255))/(255*(259-CONTRAST*255));
+      const F=(259*(1.5*255+255))/(255*(259-1.5*255));
       for(let i=0;i<d.length;i+=4){
-        const gray=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-        const v=Math.min(255,Math.max(0,Math.round(F*(gray-128)+128)));
+        const g=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        const v=Math.min(255,Math.max(0,Math.round(F*(g-128)+128)));
         d[i]=d[i+1]=d[i+2]=v;
-        // alpha stays 255
       }
       ctx.putImageData(id,0,0);
-      // JPEG 70% — texto B&N aguanta bien compresión agresiva
       res(c.toDataURL('image/jpeg',0.70).split(',')[1]);
     };
     img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
@@ -182,141 +176,7 @@ function gRB(file){
   });
 }
 
-// Thumbnail para historial (más pequeño aún)
-function getThumbnailBase64(file){
-  return imageToBase64(file,300,0.60);
-}
-
-// Mantener imageToBase64 para usos internos genéricos
-function imageToBase64(file,maxW=900,quality=0.78){
-  return new Promise((res,rej)=>{
-    const url=URL.createObjectURL(file);
-    const img=new Image();
-    img.onload=()=>{
-      URL.revokeObjectURL(url);
-      let w=img.naturalWidth,h=img.naturalHeight;
-      if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
-      const c=document.createElement('canvas');
-      c.width=w;c.height=h;
-      const ctx=c.getContext('2d');
-      ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);
-      ctx.drawImage(img,0,0,w,h);
-      res(c.toDataURL('image/jpeg',quality).split(',')[1]);
-    };
-    img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));
-    img.src=url;
-  });
-}
-
-
-
-// ── GEMINI (texto, sin imágenes) ───────────────────────────────
-async function callGemini(prompt){
-  const key=DB.apiKey;
-  if(!key)throw new Error('No hay API key. Ve a Configuración.');
-  const body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.1,maxOutputTokens:2048}};
-  const models=['gemini-2.0-flash-lite','gemini-2.0-flash'];
-  for(const model of models){
-    for(let attempt=0;attempt<2;attempt++){
-      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if(res.status===429){setOCRStatus(`Límite API. Esperando ${(attempt+1)*15}s...`);await new Promise(r=>setTimeout(r,(attempt+1)*15000));continue;}
-      if(res.status===404)break;
-      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
-      const data=await res.json();
-      return data.candidates?.[0]?.content?.parts?.[0]?.text||'';
-    }
-  }
-  throw new Error('No se pudo conectar con Gemini.');
-}
-
-
-
-// ── MAIN PROCESS FILE ──────────────────────────────────────────
-// Flow: image → Tesseract OCR → JS parser → Gemini text fallback (if 0 products)
-async function processFile(file){
-  showOCRLoading('Preparando imagen...');
-  try{
-    if(file.type==='application/pdf'){
-      hideOCRLoading();
-      showToast('Los PDFs no son compatibles. Usa el modo manual.',4000);
-      openTicketEditor(getEmptyTicket());
-      return;
-    }
-
-    // 1. Convert image to enhanced data URL (PNG, grayscale+contrast)
-    setOCRStatus('Procesando imagen...');
-    const dataUrl = await imageToDataUrl(file, 1600);
-
-    let ocrText='';
-
-    // 2. Try Tesseract OCR with the data URL
-    try{
-      setOCRStatus('Iniciando OCR local...');
-      ocrText = await runTesseract(dataUrl);
-      console.log('OCR result length:', ocrText.length);
-    }catch(tErr){
-      console.warn('Tesseract falló:', tErr.message);
-      ocrText='';
-    }
-
-    // 3. Parse OCR text with JS parser
-    let result;
-    if(ocrText && ocrText.trim().length > 30){
-      setOCRStatus('Analizando texto...');
-      result = parseTicketText(ocrText);
-      result.ocrRaw = ocrText;
-    } else {
-      result = getEmptyTicket();
-      result.ocrRaw = '';
-      result.errors = ['OCR no extrajo texto suficiente'];
-    }
-
-    // 4. If parser got 0 products → try Gemini with the OCR text
-    //    If OCR itself failed → try Gemini with a small base64 image
-    if(result.products.length === 0 && DB.apiKey){
-      if(ocrText && ocrText.trim().length > 30){
-        // Gemini text-only fallback
-        setOCRStatus('Parser sin resultados. Probando con IA (texto)...');
-        try{
-          const ai = await geminiParseText(ocrText);
-          result = {...ai, ocrRaw: ocrText};
-        }catch(e){
-          result.warnings.push('Gemini texto falló: '+e.message);
-        }
-      } else {
-        // OCR failed entirely → Gemini Vision with the same dataUrl (already compressed enough)
-        setOCRStatus('Enviando imagen a IA como último recurso...');
-        try{
-          // Recompress to smaller size for Gemini to save quota
-          const smallB64 = await imageToBase64(file, 900, 0.78);
-          result = await geminiVision(smallB64);
-          usedGeminiVision = true;
-        }catch(e){
-          result.warnings.push('Gemini visión falló: '+e.message);
-        }
-      }
-    }
-
-    // 5. Apply knowledge + metadata
-    result.products = (result.products||[]).map(p=>applyKnowledgeToProduct(p));
-    result.type='ticket';
-    result.id=uid();
-    result.payer=DB.persons[0].id;
-    result.confirmed=false;
-    result.createdAt=new Date().toISOString();
-    if(result.last4&&DB.knowledge.cards[result.last4])
-      result.payer=DB.knowledge.cards[result.last4];
-
-    hideOCRLoading();
-    openTicketEditor(result);
-
-  }catch(err){
-    hideOCRLoading();
-    showToast('Error: '+err.message, 4000);
-    openTicketEditor(getEmptyTicket());
-  }
-}
-
+// ── GEMINI VISION ──────────────────────────────────────────────
 async function geminiVision(b64){
   const key=DB.apiKey;
   if(!key) throw new Error('Sin API key. Ve a Configuración.');
@@ -324,7 +184,7 @@ async function geminiVision(b64){
     .map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
   const prompt=`Analiza este ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:
 {"store":"","date":"YYYY-MM-DD o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal del ticket","name":"nombre normalizado legible","price":0,"discount":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
-Reglas: normaliza nombres abreviados (SAL TO→Salsa tomate), detecta descuentos, confidence baja si hay dudas.${knownProds?' Productos conocidos: '+knownProds:''}`;
+Normaliza nombres abreviados (SAL TO→Salsa tomate). Detecta descuentos. Confidence baja si hay dudas.${knownProds?' Conocidos: '+knownProds:''}`;
 
   const body={
     contents:[{role:'user',parts:[
@@ -333,7 +193,6 @@ Reglas: normaliza nombres abreviados (SAL TO→Salsa tomate), detecta descuentos
     ]}],
     generationConfig:{temperature:0.1,maxOutputTokens:2048}
   };
-
   const models=['gemini-2.0-flash-lite','gemini-2.0-flash'];
   for(const model of models){
     for(let attempt=0;attempt<2;attempt++){
@@ -343,12 +202,12 @@ Reglas: normaliza nombres abreviados (SAL TO→Salsa tomate), detecta descuentos
       );
       if(res.status===429){
         const wait=(attempt+1)*20000;
-        setOCRStatus(`Límite API. Reintentando en ${wait/1000}s...`);
+        setOCRStatus('Límite API. Reintentando en '+(wait/1000)+'s...');
         await new Promise(r=>setTimeout(r,wait));
         continue;
       }
       if(res.status===404) break;
-      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||`HTTP ${res.status}`);}
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
       const data=await res.json();
       const text=data.candidates?.[0]?.content?.parts?.[0]?.text||'';
       const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
@@ -360,7 +219,65 @@ Reglas: normaliza nombres abreviados (SAL TO→Salsa tomate), detecta descuentos
       }
     }
   }
-  throw new Error('No se pudo conectar con Gemini después de varios intentos.');
+  throw new Error('No se pudo conectar con Gemini.');
+}
+
+// ── GEMINI TEXTO (chat asistente) ──────────────────────────────
+async function callGemini(prompt){
+  const key=DB.apiKey;
+  if(!key) throw new Error('No hay API key. Ve a Configuración.');
+  const body={contents:[{role:'user',parts:[{text:prompt}]}],generationConfig:{temperature:0.1,maxOutputTokens:2048}};
+  const models=['gemini-2.0-flash-lite','gemini-2.0-flash'];
+  for(const model of models){
+    for(let attempt=0;attempt<2;attempt++){
+      const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(res.status===429){await new Promise(r=>setTimeout(r,(attempt+1)*15000));continue;}
+      if(res.status===404) break;
+      if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
+      const data=await res.json();
+      return data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+    }
+  }
+  throw new Error('No se pudo conectar con Gemini.');
+}
+
+// ── PROCESS FILE ───────────────────────────────────────────────
+async function processFile(file){
+  showOCRLoading('Preparando imagen...');
+  try{
+    if(file.type==='application/pdf'){
+      hideOCRLoading();
+      showToast('Los PDFs no son compatibles. Usa el modo manual.',4000);
+      openTicketEditor(getEmptyTicket());
+      return;
+    }
+    if(!DB.apiKey){
+      hideOCRLoading();
+      showToast('Configura tu API key de Gemini primero.',4000);
+      openTicketEditor(getEmptyTicket());
+      return;
+    }
+    setOCRStatus('Optimizando imagen...');
+    const b64=await gRB(file);
+    const sizeKB=Math.round(b64.length*0.75/1024);
+    setOCRStatus('Analizando ticket con IA ('+sizeKB+' KB)...');
+    const result=await geminiVision(b64);
+    result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
+    result.type='ticket';
+    result.id=uid();
+    result.payer=DB.persons[0].id;
+    result.confirmed=false;
+    result.createdAt=new Date().toISOString();
+    if(result.last4&&DB.knowledge.cards[result.last4])
+      result.payer=DB.knowledge.cards[result.last4];
+    hideOCRLoading();
+    openTicketEditor(result);
+  }catch(err){
+    hideOCRLoading();
+    showToast('Error: '+err.message,5000);
+    console.error('processFile error:',err);
+    openTicketEditor(getEmptyTicket());
+  }
 }
 
 function applyKnowledgeToProduct(prod){
@@ -445,45 +362,41 @@ function renderTicketListItem(t){
 
 function renderPredictionsWidget(){
   const preds=getPredictions().slice(0,2);
-  if(!preds.length)return'';
+  if(!preds.length) return'';
   return`<div class="recent-label" style="margin-top:8px">Previsiones</div>${preds.map(p=>`<div class="pred-card"><div style="font-size:24px">${p.emoji}</div><div class="pred-info"><div class="pred-name">${p.name}</div><div class="pred-detail">${p.detail}</div></div><div class="pred-days">~${p.days}d</div></div>`).join('')}`;
 }
 
 // ── BALANCE CALC ───────────────────────────────────────────────
 function calcBalance(){
-  const paid={};
-  const owedTo={};
+  const paid={},owedTo={};
   DB.persons.forEach(p=>{paid[p.id]=0;owedTo[p.id]=0;});
-
   DB.tickets.filter(t=>t.confirmed&&!t.settled).forEach(t=>{
     const pid=t.payer;
     (t.products||[]).forEach(prod=>{
       const price=parseFloat(prod.finalPrice||prod.price||0);
-      if(isNaN(price)||price<=0)return;
+      if(isNaN(price)||price<=0) return;
       paid[pid]=(paid[pid]||0)+price;
       if(prod.assignedTo){
-        if(prod.assignedTo!==pid)owedTo[pid]=(owedTo[pid]||0)+price;
+        if(prod.assignedTo!==pid) owedTo[pid]=(owedTo[pid]||0)+price;
       }else{
         DB.persons.forEach(p=>{
-          if(p.id===pid)return;
+          if(p.id===pid) return;
           const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);
           owedTo[pid]=(owedTo[pid]||0)+price*pct/100;
         });
       }
     });
   });
-
   DB.expenses.filter(e=>e.confirmed&&!e.settled).forEach(e=>{
-    const amt=parseFloat(e.total||0);if(isNaN(amt)||amt<=0)return;
+    const amt=parseFloat(e.total||0);if(isNaN(amt)||amt<=0) return;
     const pid=e.payer;
     paid[pid]=(paid[pid]||0)+amt;
     DB.persons.forEach((p,i)=>{
-      if(p.id===pid)return;
+      if(p.id===pid) return;
       const pct=i===0?e.split1:100-e.split1;
       owedTo[pid]=(owedTo[pid]||0)+amt*(pct||50)/100;
     });
   });
-
   let owes=null,amount=0;
   if(DB.persons.length>=2){
     const n=(owedTo[DB.persons[0].id]||0)-(owedTo[DB.persons[1].id]||0);
@@ -524,9 +437,8 @@ function openTicketEditor(ticket){currentTicket=JSON.parse(JSON.stringify(ticket
 
 function renderTicketEditor(){
   const t=currentTicket;
-  const errorsHtml=[...(t.errors||[]),...(t.warnings||[])].map((e,i)=>`<div class="error-chip">⚠️ ${e}<button onclick="dismissErrors()">Ignorar</button></div>`).join('');
+  const errorsHtml=[...(t.errors||[]),...(t.warnings||[])].map(e=>`<div class="error-chip">⚠️ ${e}<button onclick="dismissErrors()">Ignorar</button></div>`).join('');
   const payerBtns=DB.persons.map(p=>`<button onclick="setTicketPayer('${p.id}')" style="padding:8px 12px;border-radius:var(--rad-xs);font-size:13px;font-weight:600;background:${t.payer===p.id?p.color+'33':'var(--bg3)'};color:${t.payer===p.id?p.color:'var(--txt1)'};border:1.5px solid ${t.payer===p.id?p.color:'var(--brd)'};">${p.name}</button>`).join('');
-
   document.getElementById('ticket-editor').innerHTML=`
     <div class="te-header">
       <button onclick="closeTicketEditor()" style="color:var(--txt1)"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
@@ -611,26 +523,26 @@ function setTicketPayer(id){currentTicket.payer=id;if(currentTicket.last4)DB.kno
 function dismissErrors(){currentTicket.errors=[];currentTicket.warnings=[];renderTicketEditor();}
 function saveTicket(){
   const t=currentTicket;t.confirmed=true;
-  if(!t.total||t.total===0)t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
+  if(!t.total||t.total===0) t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
   learnFromTicket(t);
   const idx=DB.tickets.findIndex(x=>x.id===t.id);
-  if(idx>=0)DB.tickets[idx]=t;else DB.tickets.push(t);
+  if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
   saveDB();generateAIQuestions(t);
   closeTicketEditor();showToast('Ticket guardado ✓');showScreen(currentScreen==='tickets'?'tickets':'home');
 }
 function learnFromTicket(t){
-  if(t.last4&&t.payer)DB.knowledge.cards[t.last4]=t.payer;
+  if(t.last4&&t.payer) DB.knowledge.cards[t.last4]=t.payer;
   (t.products||[]).forEach(prod=>{
-    const key=normalizeKey(prod.name||'');if(!key)return;
+    const key=normalizeKey(prod.name||'');if(!key) return;
     const ocrRaw=(prod.rawName||'').trim().toUpperCase();
     const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};
     DB.knowledge.products[key]={person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,count:(ex.count||0)+1,category:prod.category,ocr_raw:ocrRaw&&!ex.ocr_raw.includes(ocrRaw)?[...ex.ocr_raw,ocrRaw]:ex.ocr_raw};
   });
 }
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;}
-function deleteCurrentTicket(){if(!currentTicket)return;DB.tickets=DB.tickets.filter(t=>t.id!==currentTicket.id);saveDB();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen);}
+function deleteCurrentTicket(){if(!currentTicket) return;DB.tickets=DB.tickets.filter(t=>t.id!==currentTicket.id);saveDB();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen);}
 function openManualTicket(){openTicketEditor(getEmptyTicket());}
-function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEditor(t);return;}const e=DB.expenses.find(x=>x.id===id);if(e)openExpenseEditor(e);}
+function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEditor(t);return;}const e=DB.expenses.find(x=>x.id===id);if(e) openExpenseEditor(e);}
 
 // ── MANUAL EXPENSE ─────────────────────────────────────────────
 let currentExpense=null;
@@ -685,7 +597,7 @@ function saveManualExpense(){
   if(!currentExpense.total||currentExpense.total<=0){showToast('Introduce un importe');return;}
   currentExpense.confirmed=true;currentExpense.store=currentExpense.description||(EXPENSE_CATS.find(c=>c.id===currentExpense.category)||{}).label||'Gasto';
   const idx=DB.expenses.findIndex(e=>e.id===currentExpense.id);
-  if(idx>=0)DB.expenses[idx]=currentExpense;else DB.expenses.push(currentExpense);
+  if(idx>=0) DB.expenses[idx]=currentExpense; else DB.expenses.push(currentExpense);
   saveDB();closeManualExpense();showToast('Gasto guardado ✓');showScreen(currentScreen);
 }
 function deleteExpense(){DB.expenses=DB.expenses.filter(e=>e.id!==currentExpense.id);saveDB();closeManualExpense();showToast('Gasto eliminado');showScreen(currentScreen);}
@@ -758,19 +670,19 @@ function detectAnomalies(){
   const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);
   const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);
   const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);
-  if(lT>0&&tT>lT*1.3)msgs.push(`Este mes gastáis un ${Math.round((tT/lT-1)*100)}% más que el mes pasado.`);
+  if(lT>0&&tT>lT*1.3) msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');
   return msgs;
 }
 function renderInventorySection(){
   const preds=getPredictions();
-  if(!preds.length)return`<div class="empty-state" style="padding:20px"><p>Añade más tickets para estimar la despensa</p></div>`;
+  if(!preds.length) return`<div class="empty-state" style="padding:20px"><p>Añade más tickets para estimar la despensa</p></div>`;
   return preds.slice(0,8).map(p=>{const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';return`<div class="inv-row"><div class="inv-name">${p.emoji} ${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div></div>`;}).join('');
 }
 function getPredictions(){
   const ph={};
   DB.tickets.filter(t=>t.confirmed&&t.date).forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k)return;if(!ph[k])ph[k]={name:p.name,dates:[],category:p.category||'otro'};ph[k].dates.push(d);});});
   const now=Date.now(),catE={alimentación:'🥫',higiene:'🧴',limpieza:'🧹',bebidas:'🧃',lácteos:'🥛',fruta:'🍎',carne:'🥩',pescado:'🐟',otro:'📦'};
-  return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),emoji:catE[item.category]||'🛒',detail:`Cada ~${Math.round(avgFreq)}d · hace ${Math.round(daysSince)}d`};}).sort((a,b)=>a.days-b.days);
+  return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),emoji:catE[item.category]||'🛒',detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};}).sort((a,b)=>a.days-b.days);
 }
 
 // ── SETTINGS ───────────────────────────────────────────────────
@@ -872,7 +784,7 @@ async function sendAIMessage(){
   input.value='';
   DB.aiConvMessages.push({role:'user',content:msg});renderAIChat();
   const {paid,owes,amount}=calcBalance();
-  const ctx=`Eres el asistente de Clarito, app de gastos compartidos del hogar. Personas: ${DB.persons.map(p=>p.name).join(', ')}. Balance: ${amount>0.01?personName(owes)+' debe '+fmt(amount):'al día'}. Tickets: ${DB.tickets.filter(t=>t.confirmed).length}. Responde en español, breve y amigable. Pregunta: ${msg}`;
+  const ctx='Eres el asistente de Clarito, app de gastos compartidos del hogar. Personas: '+DB.persons.map(p=>p.name).join(', ')+'. Balance: '+(amount>0.01?personName(owes)+' debe '+fmt(amount):'al día')+'. Tickets: '+DB.tickets.filter(t=>t.confirmed).length+'. Responde en español, breve y amigable. Pregunta: '+msg;
   try{
     const resp=await callGemini(ctx);
     DB.aiConvMessages.push({role:'bot',content:resp});saveDB();renderAIChat();
@@ -889,28 +801,26 @@ function updateAIBadge(){
 function generateAIQuestions(ticket){
   const qs=[];
   if(ticket.last4&&!DB.knowledge.cards[ticket.last4])
-    qs.push({id:uid(),type:'card_assign',answered:false,last4:ticket.last4,question:`¿La tarjeta •••• ${ticket.last4} pertenece a...?`,options:DB.persons.map(p=>p.name)});
+    qs.push({id:uid(),type:'card_assign',answered:false,last4:ticket.last4,question:'¿La tarjeta •••• '+ticket.last4+' pertenece a...?',options:DB.persons.map(p=>p.name)});
   (ticket.products||[]).filter(p=>p.confidence<0.65&&!p.knownMatch).forEach(p=>{
     const key=normalizeKey(p.name||'');
     if(!DB.knowledge.products[key])
-      qs.push({id:uid(),type:'product_assign',answered:false,productName:p.name,question:`"${p.name}" (${fmt(p.finalPrice||0)}) · ¿De quién es?`,options:[...DB.persons.map(p=>p.name),'Compartido']});
+      qs.push({id:uid(),type:'product_assign',answered:false,productName:p.name,question:'"'+p.name+'" ('+fmt(p.finalPrice||0)+') · ¿De quién es?',options:[...DB.persons.map(p=>p.name),'Compartido']});
   });
   if(qs.length){DB.aiQuestions.push(...qs);saveDB();updateAIBadge();}
 }
 
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
-
-// Show splash for 1.4s, then boot
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
     if(!DB.apiKey){
       startSetup();
-    } else {
+    }else{
       document.getElementById('app').style.display='flex';
       showScreen('home');
       updateAIBadge();
     }
-  }, 100);
-}, 2500);
+  },100);
+},2500);
