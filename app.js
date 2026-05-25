@@ -310,12 +310,25 @@ function parseTicketText(text){
       // Recoge precios en líneas siguientes (mientras sean solo precio)
       const priceLines=[];
       while(i<lines.length&&PRICE_ONLY_RX.test(lines[i])){
-        priceLines.push(parseFloat(lines[i].replace(',','.')));
+        priceLines.push({val:parseFloat(lines[i].replace(',','.')), raw:lines[i]});
         i++;
       }
       if(priceLines.length>0){
-        // El precio total es el mayor (cuando hay qty>1, aparece precio unit y precio total)
-        const price=Math.max(...priceLines);
+        // Detectar patrón fruta/verdura: "0,454 kg x 1,99 €/kg" → ignorar precio/kg, usar el total
+        // Si hay 3 precios: [kg_amount, price_per_kg, total] → usar el último (total)
+        // Si hay 2 precios y el primero es <1 (kilos): [kilos, precio_unit] o [unit_price, total]
+        // Regla simple: el precio total es SIEMPRE el mayor entre los que no parecen kg (>0.1)
+        let price;
+        if(priceLines.length>=3){
+          // Tres líneas: probablemente kilos, €/kg, total → el último es el total
+          price=priceLines[priceLines.length-1].val;
+        } else if(priceLines.length===2){
+          // Dos líneas: precio unit y total, o kilos y precio → el mayor es el total
+          price=Math.max(priceLines[0].val, priceLines[1].val);
+        } else {
+          price=priceLines[0].val;
+        }
+
         const rawName=line.trim();
         if(SKIP_RX.test(rawName)) continue;
         if(rawName.length<2) continue;
@@ -731,13 +744,20 @@ function renderProductRow(prod,i){
         <input value="${prod.name||''}" style="background:transparent;border:none;padding:0;font-size:14px;font-weight:500;color:var(--txt0);width:100%" oninput="currentTicket.products[${i}].name=this.value" placeholder="Nombre del producto"/>
         ${prod.rawName&&prod.rawName!==prod.name?`<div class="product-name-raw">${prod.rawName}</div>`:''}
       </div>
-      <input class="product-price-input"
-        value="${priceDisplay}"
-        placeholder="0,00"
-        inputmode="decimal"
-        onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
-        onblur="if(!this.value)this.value='0.00';currentTicket.products[${i}].finalPrice=parsePrice(this.value)"
-        oninput="currentTicket.products[${i}].finalPrice=parsePrice(this.value)"/>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+        <input class="product-price-input"
+          value="${priceDisplay}"
+          placeholder="0,00"
+          inputmode="decimal"
+          onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
+          onblur="if(!this.value)this.value='0.00';currentTicket.products[${i}].finalPrice=parsePrice(this.value)"
+          oninput="currentTicket.products[${i}].finalPrice=parsePrice(this.value)"/>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button onclick="changeQty(${i},-1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
+          <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${prod.qty||1}×</span>
+          <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
+        </div>
+      </div>
     </div>
     <div class="product-bottom">
       ${personBtns}
@@ -749,6 +769,12 @@ function renderProductRow(prod,i){
 }
 
 function assignProduct(i,pid){currentTicket.products[i].assignedTo=pid;currentTicket.products[i].shared=!pid;renderProductsList();}
+function changeQty(i,delta){
+  const p=currentTicket.products[i];
+  p.qty=Math.max(1,(p.qty||1)+delta);
+  const el=document.getElementById('qty-'+i);
+  if(el) el.textContent=p.qty+'×';
+}
 function renderProductsList(){const el=document.getElementById('products-list');if(el)el.innerHTML=(currentTicket.products||[]).map((p,i)=>renderProductRow(p,i)).join('');}
 function editSplit(i){
   const prod=currentTicket.products[i];
@@ -783,7 +809,15 @@ function saveTicket(){
   closeTicketEditor();showToast('Ticket guardado ✓');showScreen(currentScreen==='tickets'?'tickets':'home');
 }
 function learnFromTicket(t){
-  if(t.last4&&t.payer) DB.knowledge.cards[t.last4]=t.payer;
+  if(t.last4&&t.payer){
+    DB.knowledge.cards[t.last4]=t.payer;
+    // También añadir a la lista de tarjetas de la persona si no está ya
+    const person=personById(t.payer);
+    if(person){
+      if(!person.cards) person.cards=[];
+      if(!person.cards.includes(t.last4)) person.cards.push(t.last4);
+    }
+  }
   (t.products||[]).forEach(prod=>{
     const key=normalizeKey(prod.name||'');if(!key) return;
     const ocrRaw=(prod.rawName||'').trim().toUpperCase();
