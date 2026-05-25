@@ -341,7 +341,6 @@ function makeProduct(name,rawName,price,qty=1){
     assignedTo:null,shared:true,pct1:50
   };
 }
-}
 
 function normalizeProdName(raw){
   // Expande abreviaturas comunes de supermercados españoles
