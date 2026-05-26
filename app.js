@@ -9,10 +9,16 @@ const S = {
 };
 
 const PRESET_COLORS = [
-  '#7c6ef5','#3ecf8e','#e5534b','#f59e0b','#4a9eff',
-  '#f472b6','#22d3ee','#a3e635','#fb923c','#e879f9',
-  '#34d399','#f87171','#60a5fa','#fbbf24','#a78bfa',
-  '#2dd4bf','#818cf8','#fb7185'
+  '#f97316', // naranja
+  '#a855f7', // morado
+  '#ec4899', // rosa
+  '#38bdf8', // celeste
+  '#22c55e', // verde
+  '#ef4444', // rojo
+  '#3b82f6', // azul
+  '#eab308', // amarillo
+  '#14b8a6', // turquesa
+  '#f43f5e', // coral
 ];
 
 let DB = {
@@ -142,7 +148,7 @@ function renderSetupStep(){
       <div style="background:var(--bg2);border:1px solid var(--brd);border-radius:var(--rad);padding:16px;margin-bottom:20px">
         ${DB.persons.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--brd)"><div style="width:12px;height:12px;border-radius:50%;background:${p.color};flex-shrink:0"></div><div style="font-weight:600">${p.name}</div></div>`).join('')}
       </div>
-      <button class="btn-primary" onclick="finishSetup()">Empezar a usar Clarito ✦</button>`;
+      <button class="btn-primary" onclick="finishSetup()">Empezar a usar Clarito</button>`;
   }
   el.innerHTML=html;
 }
@@ -596,13 +602,13 @@ function renderHome(){
     <div class="screen-header">
       <div style="display:flex;align-items:center;gap:10px">
         <img src="icon.png" style="width:28px;height:28px;border-radius:8px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/>
-        <div><h1>Clarito ✦</h1><p>La contabilidad doméstica casi invisible</p></div>
+        <div><h1>Clarito</h1><p>La contabilidad doméstica casi invisible</p></div>
       </div>
     </div>
     <div class="balance-hero">
       <div class="balance-hero-label">Balance actual</div>
       ${bal.amount<0.01
-        ?`<div class="balance-hero-amount" style="color:var(--green)">✓ Cuentas al día</div>`
+        ?`<div class="balance-hero-amount" style="color:var(--green)">Cuentas al dia</div>`
         :`<div class="balance-hero-amount" style="color:var(--amber)">${fmt(bal.amount)}</div>
           <div style="font-size:13px;color:var(--txt1);margin-top:4px">${personName(bal.owes)} debe a ${personName(bal.owes===DB.persons[0].id?DB.persons[1]?.id:DB.persons[0].id)}</div>`}
       <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px">
@@ -647,7 +653,7 @@ function renderTicketListItem(t){
 function renderPredictionsWidget(){
   const preds=getPredictions().slice(0,2);
   if(!preds.length) return'';
-  return`<div class="recent-label" style="margin-top:8px">Previsiones</div>${preds.map(p=>`<div class="pred-card"><div style="font-size:24px">${p.emoji}</div><div class="pred-info"><div class="pred-name">${p.name}</div><div class="pred-detail">${p.detail}</div></div><div class="pred-days">~${p.days}d</div></div>`).join('')}`;
+  return`<div class="recent-label" style="margin-top:8px">Previsiones</div>${preds.map(p=>`<div class="pred-card"><div class="pred-info"><div class="pred-name">${p.name}</div><div class="pred-detail">${p.detail}</div></div><div class="pred-days">~${p.days}d</div></div>`).join('')}`;
 }
 
 // ── BALANCE CALC ───────────────────────────────────────────────
@@ -700,8 +706,8 @@ function renderTickets(){
       <h3>Subir ticket desde galería</h3><p>Toca aquí o arrastra una imagen</p>
     </div>
     <div class="upload-actions">
-      <button class="btn-secondary" onclick="triggerCamera()">📷 Cámara</button>
-      <button class="btn-secondary" onclick="openManualTicket()">✏️ Manual</button>
+      <button class="btn-secondary" onclick="triggerCamera()">Cámara</button>
+      <button class="btn-secondary" onclick="openManualTicket()">Manual</button>
     </div>
     <div style="height:16px"></div>
     ${tickets.length===0
@@ -721,7 +727,7 @@ function openTicketEditor(ticket){currentTicket=JSON.parse(JSON.stringify(ticket
 
 function renderTicketEditor(){
   const t=currentTicket;
-  const errorsHtml=[...(t.errors||[]),...(t.warnings||[])].map(e=>`<div class="error-chip">⚠️ ${e}<button onclick="dismissErrors()">Ignorar</button></div>`).join('');
+  const errorsHtml=[...(t.errors||[]),...(t.warnings||[])].map(e=>`<div class="error-chip">${e}<button onclick="dismissErrors()">Ignorar</button></div>`).join('');
   const payerBtns=DB.persons.map(p=>`<button onclick="setTicketPayer('${p.id}')" style="padding:8px 12px;border-radius:var(--rad-xs);font-size:13px;font-weight:600;background:${t.payer===p.id?p.color+'33':'var(--bg3)'};color:${t.payer===p.id?p.color:'var(--txt1)'};border:1.5px solid ${t.payer===p.id?p.color:'var(--brd)'};">${p.name}</button>`).join('');
   document.getElementById('ticket-editor').innerHTML=`
     <div class="te-header">
@@ -861,7 +867,7 @@ function saveTicket(){
   const idx=DB.tickets.findIndex(x=>x.id===t.id);
   if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
   saveDB();
-  closeTicketEditor();showToast('Ticket guardado ✓');showScreen(currentScreen==='tickets'?'tickets':'home');
+  closeTicketEditor();showToast('Ticket guardado');showScreen(currentScreen==='tickets'?'tickets':'home');
 }
 function learnFromTicket(t){
   if(t.last4&&t.payer){
@@ -909,18 +915,18 @@ function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEdit
 // ── MANUAL EXPENSE ─────────────────────────────────────────────
 let currentExpense=null;
 const EXPENSE_CATS=[
-  {id:'alquiler',label:'Alquiler',emoji:'🏠'},{id:'suministros',label:'Luz/Agua/Gas',emoji:'💡'},
-  {id:'internet',label:'Internet',emoji:'📶'},{id:'suscripciones',label:'Suscripciones',emoji:'📱'},
-  {id:'restaurantes',label:'Restaurantes',emoji:'🍽'},{id:'transporte',label:'Transporte',emoji:'🚗'},
-  {id:'ocio',label:'Ocio',emoji:'🎉'},{id:'salud',label:'Salud',emoji:'💊'},
-  {id:'ropa',label:'Ropa',emoji:'👗'},{id:'hogar',label:'Hogar',emoji:'🛋'},
-  {id:'mascotas',label:'Mascotas',emoji:'🐾'},{id:'otro',label:'Otro',emoji:'📌'},
+  {id:'alquiler',label:'Alquiler',emoji:''},{id:'suministros',label:'Luz/Agua/Gas',emoji:''},
+  {id:'internet',label:'Internet',emoji:''},{id:'suscripciones',label:'Suscripciones',emoji:''},
+  {id:'restaurantes',label:'Restaurantes',emoji:''},{id:'transporte',label:'Transporte',emoji:''},
+  {id:'ocio',label:'Ocio',emoji:''},{id:'salud',label:'Salud',emoji:''},
+  {id:'ropa',label:'Ropa',emoji:''},{id:'hogar',label:'Hogar',emoji:''},
+  {id:'mascotas',label:'Mascotas',emoji:''},{id:'otro',label:'Otro',emoji:''},
 ];
 function openManualExpense(){currentExpense={id:uid(),type:'expense',store:'',category:'hogar',description:'',total:0,payer:DB.persons[0].id,date:new Date().toISOString().slice(0,10),split1:50,confirmed:false,createdAt:new Date().toISOString()};renderManualExpenseSheet();document.getElementById('me-sheet').style.display='flex';}
 function openExpenseEditor(exp){currentExpense=JSON.parse(JSON.stringify(exp));renderManualExpenseSheet();document.getElementById('me-sheet').style.display='flex';}
 function renderManualExpenseSheet(){
   const e=currentExpense;
-  const catBtns=EXPENSE_CATS.map(c=>`<button onclick="setExpenseCat('${c.id}')" style="padding:7px 11px;border-radius:var(--rad-xs);font-size:12px;background:${e.category===c.id?'var(--accent)33':'var(--bg3)'};color:${e.category===c.id?'var(--accent)':'var(--txt1)'};border:1px solid ${e.category===c.id?'var(--accent)':'var(--brd)'};">${c.emoji} ${c.label}</button>`).join('');
+  const catBtns=EXPENSE_CATS.map(c=>`<button onclick="setExpenseCat('${c.id}')" style="padding:7px 11px;border-radius:var(--rad-xs);font-size:12px;background:${e.category===c.id?'var(--accent)33':'var(--bg3)'};color:${e.category===c.id?'var(--accent)':'var(--txt1)'};border:1px solid ${e.category===c.id?'var(--accent)':'var(--brd)'};">${c.label}</button>`).join('');
   const payerBtns=DB.persons.map(p=>`<button onclick="setExpensePayer('${p.id}')" style="flex:1;padding:10px;border-radius:var(--rad-xs);font-size:13px;font-weight:600;background:${e.payer===p.id?p.color+'33':'var(--bg3)'};color:${e.payer===p.id?p.color:'var(--txt1)'};border:1.5px solid ${e.payer===p.id?p.color:'var(--brd)'};">${p.name}</button>`).join('');
   const p1=DB.persons[0],p2=DB.persons[1]||DB.persons[0];
   document.getElementById('me-sheet').innerHTML=`
@@ -960,7 +966,7 @@ function saveManualExpense(){
   currentExpense.confirmed=true;currentExpense.store=currentExpense.description||(EXPENSE_CATS.find(c=>c.id===currentExpense.category)||{}).label||'Gasto';
   const idx=DB.expenses.findIndex(e=>e.id===currentExpense.id);
   if(idx>=0) DB.expenses[idx]=currentExpense; else DB.expenses.push(currentExpense);
-  saveDB();closeManualExpense();showToast('Gasto guardado ✓');showScreen(currentScreen);
+  saveDB();closeManualExpense();showToast('Gasto guardado');showScreen(currentScreen);
 }
 function deleteExpense(){DB.expenses=DB.expenses.filter(e=>e.id!==currentExpense.id);saveDB();closeManualExpense();showToast('Gasto eliminado');showScreen(currentScreen);}
 function closeManualExpense(){document.getElementById('me-sheet').style.display='none';currentExpense=null;}
@@ -973,9 +979,9 @@ function renderBalance(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Balance</h1><p>Deudas y liquidaciones</p></div>
     ${amount<0.01
-      ?`<div class="balance-card"><div class="bc-owes" style="color:var(--green)">✓ Cuentas al día</div><div class="bc-amount" style="font-size:28px">Sin deuda</div></div>`
+      ?`<div class="balance-card"><div class="bc-owes" style="color:var(--green)">Cuentas al dia</div><div class="bc-amount" style="font-size:28px">Sin deuda</div></div>`
       :`<div class="balance-card"><div class="bc-owes">${personName(owes)} debe a ${creditor?.name}</div><div class="bc-amount">${fmt(amount)}</div></div>
-        <button class="settle-btn" onclick="settleAccounts()">Cuentas saldadas ✓</button>`}
+        <button class="settle-btn" onclick="settleAccounts()">Cuentas saldadas</button>`}
     <div style="margin:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
       ${DB.persons.map(p=>`<div class="stat-card"><div class="stat-label" style="color:${p.color}">${p.name}</div><div class="stat-value" style="color:${p.color}">${fmt(paid[p.id]||0)}</div></div>`).join('')}
     </div>
@@ -997,33 +1003,90 @@ function confirmSettle(){
   DB.settlements.push({id:uid(),date:new Date().toISOString(),msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor?.name}`,amount,owes});
   DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});
   DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});
-  saveDB();closeModal();showToast('Cuentas saldadas ✓',3000);renderBalance();
+  saveDB();closeModal();showToast('Cuentas saldadas',3000);renderBalance();
 }
 
 // ── STATS ──────────────────────────────────────────────────────
 function renderStats(){
   const now=new Date();
+  const thisMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const allT=DB.tickets.filter(t=>t.confirmed);
-  const monthT=allT.filter(t=>t.date&&new Date(t.date).getMonth()===now.getMonth()&&new Date(t.date).getFullYear()===now.getFullYear());
+  const monthT=allT.filter(t=>t.date&&t.date.startsWith(thisMonth));
   const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
+
+  // Gasto real por persona este mes (parte proporcional de comunes + los suyos)
+  const monthByPerson={};
+  DB.persons.forEach(p=>monthByPerson[p.id]=0);
+  monthT.forEach(t=>{
+    (t.products||[]).forEach(prod=>{
+      const price=parseFloat(prod.finalPrice||prod.price||0);
+      if(!price) return;
+      if(prod.assignedTo){
+        monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;
+      } else {
+        DB.persons.forEach(p=>{
+          const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);
+          monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;
+        });
+      }
+    });
+  });
+  DB.expenses.filter(e=>e.confirmed&&e.date&&e.date.startsWith(thisMonth)).forEach(e=>{
+    const amt=parseFloat(e.total||0);
+    DB.persons.forEach((p,i)=>{
+      const pct=i===0?e.split1:100-e.split1;
+      monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*(pct||50)/100;
+    });
+  });
+
+  // Categorías (todo el tiempo)
   const catMap={};
   allT.forEach(t=>(t.products||[]).forEach(p=>{const c=p.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(p.finalPrice||p.price||0);}));
   DB.expenses.filter(e=>e.confirmed).forEach(e=>{const c=e.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(e.total||0);});
   const catSorted=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const catMax=catSorted[0]?catSorted[0][1]:1;
+
+  // Supermercados
   const storeMap={};
   allT.forEach(t=>{if(t.store)storeMap[t.store]=(storeMap[t.store]||0)+(parseFloat(t.total)||0);});
   const storeSorted=Object.entries(storeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+  // Productos más comprados
+  const prodCount={};
+  allT.forEach(t=>(t.products||[]).forEach(p=>{
+    const k=p.name||p.rawName||'';if(!k)return;
+    prodCount[k]=(prodCount[k]||0)+(p.qty||1);
+  }));
+  const topProds=Object.entries(prodCount).sort((a,b)=>b[1]-a[1]).slice(0,6);
+
   const anomalies=detectAnomalies();
+
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Estadísticas</h1><p>Análisis del hogar</p></div>
+
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Este mes</div><div class="stat-value">${fmt(monthTotal)}</div></div>
+      <div class="stat-card"><div class="stat-label">Este mes total</div><div class="stat-value">${fmt(monthTotal)}</div></div>
       <div class="stat-card"><div class="stat-label">Tickets totales</div><div class="stat-value">${allT.length}</div></div>
     </div>
-    ${anomalies.length?`<div style="margin:0 16px 14px">${anomalies.map(a=>`<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:var(--rad-sm);padding:10px 12px;margin-bottom:8px;font-size:13px;color:#f59e0b">⚠️ ${a}</div>`).join('')}</div>`:''}
+
+    <div class="recent-label">Gasto este mes por persona</div>
+    <div style="margin:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
+      ${DB.persons.map(p=>`
+        <div class="stat-card" style="border-color:${p.color}33">
+          <div class="stat-label" style="color:${p.color}">${p.name}</div>
+          <div class="stat-value" style="color:${p.color};font-size:18px">${fmt(monthByPerson[p.id]||0)}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-top:4px">${monthTotal>0?Math.round((monthByPerson[p.id]||0)/monthTotal*100)+'% del total':''}</div>
+        </div>`).join('')}
+    </div>
+
+    ${anomalies.length?`<div style="margin:0 16px 14px">${anomalies.map(a=>`<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:var(--rad-sm);padding:10px 12px;margin-bottom:8px;font-size:13px;color:#f59e0b">${a}</div>`).join('')}</div>`:''}
+
+    ${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}
+
     ${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}
-    ${storeSorted.length?`<div class="recent-label">Supermercados</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
+
+    ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
+
     <div class="recent-label">Despensa estimada</div>${renderInventorySection()}`;
 }
 function detectAnomalies(){
@@ -1038,13 +1101,13 @@ function detectAnomalies(){
 function renderInventorySection(){
   const preds=getPredictions();
   if(!preds.length) return`<div class="empty-state" style="padding:20px"><p>Añade más tickets para estimar la despensa</p></div>`;
-  return preds.slice(0,8).map(p=>{const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';return`<div class="inv-row"><div class="inv-name">${p.emoji} ${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div></div>`;}).join('');
+  return preds.slice(0,8).map(p=>{const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div></div>`;}).join('');
 }
 function getPredictions(){
   const ph={};
   DB.tickets.filter(t=>t.confirmed&&t.date).forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k)return;if(!ph[k])ph[k]={name:p.name,dates:[],category:p.category||'otro'};ph[k].dates.push(d);});});
-  const now=Date.now(),catE={alimentación:'🥫',higiene:'🧴',limpieza:'🧹',bebidas:'🧃',lácteos:'🥛',fruta:'🍎',carne:'🥩',pescado:'🐟',otro:'📦'};
-  return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),emoji:catE[item.category]||'🛒',detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};}).sort((a,b)=>a.days-b.days);
+  const now=Date.now();
+  return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};}).sort((a,b)=>a.days-b.days);
 }
 
 // ── SETTINGS ───────────────────────────────────────────────────
@@ -1088,20 +1151,30 @@ function renderSettings(){
 function editKnowledgeProducts(){
   const prods=Object.entries(DB.knowledge.products).sort((a,b)=>a[0].localeCompare(b[0]));
   if(!prods.length){showToast('No hay productos aprendidos todavía');return;}
+  const personOpts=`<option value="">Común</option>`+DB.persons.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   const rows=prods.map(([key,v])=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--brd)">
-      <div style="flex:1;min-width:0">
-        <input value="${v.alias||key}" style="background:transparent;border:none;font-size:14px;font-weight:500;color:var(--txt0);width:100%;padding:0"
+    <div style="padding:10px 0;border-bottom:1px solid var(--brd)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <input value="${v.alias||key}" style="background:transparent;border:none;border-bottom:1px solid var(--brd);font-size:14px;font-weight:500;color:var(--txt0);flex:1;padding:2px 0"
           onchange="renameKnowledgeProduct('${key}',this.value)"/>
-        <div style="font-size:11px;color:var(--txt3);margin-top:2px">${v.ocr_raw?.[0]||key}</div>
+        <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
       </div>
-      <div style="font-size:12px;color:${v.shared?'var(--blue)':personColor(v.person)};font-weight:600;flex-shrink:0">${v.shared?'Común':personName(v.person)}</div>
-      <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--txt3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.ocr_raw?.[0]||key}</span>
+        <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:12px;padding:3px 6px;width:auto;flex-shrink:0;border-radius:var(--rad-xs)">
+          ${`<option value="" ${!v.person?'selected':''}>Común</option>`+DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}
+        </select>
+      </div>
     </div>`).join('');
   openModal(`<div class="modal-title">Productos aprendidos</div>
-    <p style="font-size:12px;color:var(--txt2);margin-bottom:12px">Edita el nombre o elimina productos. El nombre editado se aplicará automáticamente en futuros tickets.</p>
-    <div style="max-height:60vh;overflow-y:auto">${rows}</div>
-    <button class="btn-primary" style="margin-top:14px" onclick="saveDB();closeModal();showToast('Guardado ✓');renderSettings()">Listo</button>`);
+    <p style="font-size:12px;color:var(--txt2);margin-bottom:12px">Edita el nombre, asigna a persona o elimina. Los cambios se aplican en futuros tickets.</p>
+    <div style="max-height:55vh;overflow-y:auto">${rows}</div>
+    <button class="btn-primary" style="margin-top:14px" onclick="saveDB();closeModal();showToast('Guardado');renderSettings()">Listo</button>`);
+}
+function assignKnowledgeProduct(key,pid){
+  if(!DB.knowledge.products[key]) return;
+  DB.knowledge.products[key].person=pid||null;
+  DB.knowledge.products[key].shared=!pid;
 }
 function renameKnowledgeProduct(key,newName){
   if(!newName.trim()) return;
@@ -1135,13 +1208,13 @@ function removePerson(idx){if(DB.persons.length<=1){showToast('Debe haber al men
 function savePerson(idx){const n=document.getElementById('ep-name').value.trim();if(n)DB.persons[idx].name=n;saveDB();closeModal();renderSettings();}
 function forgetCard(l4){delete DB.knowledge.cards[l4];saveDB();renderSettings();}
 function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimiento?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">Se eliminan los productos aprendidos. Los tickets se conservan.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="DB.knowledge.products={};saveDB();closeModal();renderSettings();showToast('Borrado')">Borrar</button></div>`);}
-function editApiKey(){openModal(`<div class="modal-title">API Key de Gemini</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key gratuita en aistudio.google.com</p><input type="password" id="new-apikey" value="${DB.apiKey||''}" placeholder="AIza..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-apikey').value.trim();if(!k)return;DB.apiKey=k;S.set('apiKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
-function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key en <strong style="color:var(--accent)">console.cloud.google.com</strong> → APIs y servicios → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
-function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Key gratuita en <strong style="color:var(--accent)">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
-function editOcrKey(){openModal(`<div class="modal-title">API Key de OCR.space</div><p style="font-size:13px;color:var(--txt2);margin-bottom:4px">Key gratuita en <strong style="color:var(--accent)">ocr.space/ocrapi</strong></p><p style="font-size:12px;color:var(--txt3);margin-bottom:12px">Deja <em>helloworld</em> para usar la key demo (limitada)</p><input type="password" id="new-ocrkey" value="${DB.ocrKey||'helloworld'}" placeholder="helloworld"/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-ocrkey').value.trim()||'helloworld';DB.ocrKey=k;S.set('ocrKey',k);saveDB();closeModal();showToast('Guardada ✓');renderSettings()">Guardar</button></div>`);}
+function editApiKey(){openModal(`<div class="modal-title">API Key de Gemini</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key gratuita en aistudio.google.com</p><input type="password" id="new-apikey" value="${DB.apiKey||''}" placeholder="AIza..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-apikey').value.trim();if(!k)return;DB.apiKey=k;S.set('apiKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
+function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key en <strong style="color:var(--accent)">console.cloud.google.com</strong> → APIs y servicios → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
+function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Key gratuita en <strong style="color:var(--accent)">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
+function editOcrKey(){openModal(`<div class="modal-title">API Key de OCR.space</div><p style="font-size:13px;color:var(--txt2);margin-bottom:4px">Key gratuita en <strong style="color:var(--accent)">ocr.space/ocrapi</strong></p><p style="font-size:12px;color:var(--txt3);margin-bottom:12px">Deja <em>helloworld</em> para usar la key demo (limitada)</p><input type="password" id="new-ocrkey" value="${DB.ocrKey||'helloworld'}" placeholder="helloworld"/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-ocrkey').value.trim()||'helloworld';DB.ocrKey=k;S.set('ocrKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 
 function exportData(){const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='clarito-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
-function resetAll(){openModal(`<div class="modal-title">⚠️ ¿Borrar todo?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">No se puede deshacer.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="localStorage.clear();location.reload()">Borrar todo</button></div>`);}
+function resetAll(){openModal(`<div class="modal-title">¿Borrar todo?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">No se puede deshacer.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="localStorage.clear();location.reload()">Borrar todo</button></div>`);}
 
 // ── AI CHAT ────────────────────────────────────────────────────
 function openAIChat(){renderAIChat();document.getElementById('ai-chat-sheet').style.display='flex';}
@@ -1171,7 +1244,7 @@ function answerAIQuestion(qid,answer){
   else if(q.type==='card_assign'&&answer!=='skip'){const pid=DB.persons.find(p=>p.name===answer)?.id;if(pid)DB.knowledge.cards[q.last4]=pid;}
   saveDB();updateAIBadge();
   const el=document.getElementById('qa-'+qid);
-  if(el){el.style.opacity='.4';el.querySelector('.ai-qa-btns').innerHTML='<span style="font-size:12px;color:var(--txt2)">✓ Respondido</span>';}
+  if(el){el.style.opacity='.4';el.querySelector('.ai-qa-btns').innerHTML='<span style="font-size:12px;color:var(--txt2)">Respondido</span>';}
 }
 async function sendAIMessage(){
   const input=document.getElementById('ai-input');
@@ -1217,7 +1290,7 @@ Responde en español, breve y directo. Si preguntan cuánto gastó alguien, da e
     DB.aiConvMessages.push({role:'bot',content:resp});saveDB();renderAIChat();
     const msgs=document.getElementById('ai-messages');if(msgs)msgs.scrollTop=msgs.scrollHeight;
   }catch(err){
-    DB.aiConvMessages.push({role:'bot',content:'⚠️ '+err.message});renderAIChat();
+    DB.aiConvMessages.push({role:'bot',content:'Error: '+err.message});renderAIChat();
   }
 }
 function updateAIBadge(){
