@@ -32,17 +32,15 @@ let DB = {
   ],
   tickets:[],expenses:[],settlements:[],
   knowledge:{products:{},cards:{}},
-  aiQuestions:[],aiConvMessages:[],lightMode:false
+  aiQuestions:[],aiConvMessages:[]
 };
 
 function loadDB(){
   const saved=S.get('db');
   if(saved) DB=Object.assign({},DB,saved);
-  DB.apiKey=S.get('apiKey')||DB.apiKey||'';
   DB.ocrKey=S.get('ocrKey')||DB.ocrKey||'helloworld';
   DB.visionKey=S.get('visionKey')||DB.visionKey||'';
   DB.groqKey=S.get('groqKey')||DB.groqKey||'';
-  DB.lightMode=S.get('lightMode')||DB.lightMode||false;
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.aiQuestions) DB.aiQuestions=[];
   if(!DB.aiConvMessages) DB.aiConvMessages=[];
@@ -108,17 +106,17 @@ function renderSetupStep(){
   if(setupStep===0){
     html+=`
       <h2>Bienvenido a Clarito</h2>
-      <p>Necesitas una API Key de Google AI Studio para el asistente IA. Es <strong>completamente gratuita</strong>.</p>
+      <p>Necesitas dos claves gratuitas para que Clarito funcione.</p>
       <div class="field-row">
-        <label class="field-label">API Key de Gemini</label>
-        <input type="password" id="s-apikey" placeholder="AIza..." value="${DB.apiKey||''}"/>
+        <label class="field-label">Google Cloud Vision Key <span style="color:var(--txt3)">(leer tickets)</span></label>
+        <input type="password" id="s-visionkey" placeholder="AIzaSy..." value="${DB.visionKey||''}"/>
       </div>
-      <p style="font-size:12px;color:var(--txt2);margin-bottom:8px">Obtén tu key en <strong style="color:var(--accent)">aistudio.google.com</strong> → Get API Key</p>
-      <div class="field-row" style="margin-top:12px">
-        <label class="field-label">Google Cloud Vision Key <span style="color:var(--txt3)">(para leer tickets)</span></label>
-        <input type="password" id="s-ocrkey" placeholder="AIzaSy..." value="${DB.visionKey||''}"/>
+      <p style="font-size:12px;color:var(--txt2);margin-bottom:12px">console.cloud.google.com → APIs → Credenciales</p>
+      <div class="field-row">
+        <label class="field-label">Groq Key <span style="color:var(--txt3)">(asistente IA)</span></label>
+        <input type="password" id="s-groqkey" placeholder="gsk_..." value="${DB.groqKey||''}"/>
       </div>
-      <p style="font-size:12px;color:var(--txt2);margin-bottom:20px">Obtén tu key en <strong style="color:var(--accent)">console.cloud.google.com</strong> → APIs → Credenciales</p>
+      <p style="font-size:12px;color:var(--txt2);margin-bottom:20px">console.groq.com → API Keys (gratis)</p>
       <button class="btn-primary" onclick="setupNext0()">Continuar →</button>`;
   } else if(setupStep===1){
     html+=`
@@ -156,11 +154,11 @@ function renderSetupStep(){
 
 function pickColor(idx,color,el){DB.persons[idx].color=color;document.querySelectorAll(`#cp-${idx} .color-swatch`).forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
 function setupNext0(){
-  const key=document.getElementById('s-apikey').value.trim();
-  const ocrKey=document.getElementById('s-ocrkey').value.trim();
-  if(!key){showToast('Introduce tu API key de Gemini');return;}
-  DB.apiKey=key;S.set('apiKey',key);
-  DB.visionKey=ocrKey||'';S.set('visionKey',DB.visionKey);
+  const vk=document.getElementById('s-visionkey').value.trim();
+  const gk=document.getElementById('s-groqkey').value.trim();
+  if(!vk){showToast('Introduce tu Google Vision Key');return;}
+  DB.visionKey=vk;S.set('visionKey',vk);
+  DB.groqKey=gk;S.set('groqKey',gk);
   setupStep=1;renderSetupStep();
 }
 function setupNext1(){setupStep=2;renderSetupStep();}
@@ -527,17 +525,9 @@ async function processFile(file){
           result.warnings.push('IA no disponible: '+groqErr.message);
         }
       }
-    } else if(DB.apiKey){
-      // Sin OCR text, intentar con Gemini Vision como último recurso
-      // (esto requiere el endpoint vision, que consume más cuota)
-      setOCRStatus('Sin texto OCR. Introduce el ticket manualmente.');
-      hideOCRLoading();
-      showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);
-      openTicketEditor(getEmptyTicket());
-      return;
     } else {
       hideOCRLoading();
-      showToast('OCR falló y no hay API key de Gemini. Introduce manualmente.',4000);
+      showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);
       openTicketEditor(getEmptyTicket());
       return;
     }
@@ -566,33 +556,19 @@ async function processFile(file){
 function applyKnowledgeToProduct(prod){
   const rawNorm=normalizeKey(prod.rawName||'');
   const nameNorm=normalizeKey(prod.name||'');
+  const rawUpper=(prod.rawName||'').trim().toUpperCase();
+  const nameUpper=(prod.name||'').trim().toUpperCase();
 
-  // Search 1: exact normalized key
-  let match=DB.knowledge.products[nameNorm]||DB.knowledge.products[rawNorm];
-
-  // Search 2: any entry whose alias normalizes to our product name/raw
-  if(!match){
-    match=Object.values(DB.knowledge.products).find(v=>
-      v.alias&&(normalizeKey(v.alias)===nameNorm||normalizeKey(v.alias)===rawNorm)
+  // Buscar en todos los órdenes de prioridad
+  let match=
+    DB.knowledge.products[rawNorm] ||          // por rawName normalizado (índice directo)
+    DB.knowledge.products[nameNorm] ||         // por nombre normalizado
+    Object.values(DB.knowledge.products).find(v=>  // por ocr_raw
+      v.ocr_raw&&(v.ocr_raw.includes(rawUpper)||v.ocr_raw.includes(nameUpper))
+    ) ||
+    Object.values(DB.knowledge.products).find(v=>  // por alias normalizado
+      v.alias&&(normalizeKey(v.alias)===rawNorm||normalizeKey(v.alias)===nameNorm)
     );
-  }
-  // Search 3: ocr_raw uppercase match
-  if(!match){
-    const rawUpper=(prod.rawName||'').trim().toUpperCase();
-    const nameUpper=(prod.name||'').trim().toUpperCase();
-    if(rawUpper||nameUpper){
-      match=Object.values(DB.knowledge.products).find(v=>
-        v.ocr_raw&&(v.ocr_raw.includes(rawUpper)||v.ocr_raw.includes(nameUpper))
-      );
-    }
-  }
-  // Search 4: partial normalized key match (handles OCR noise)
-  if(!match&&nameNorm.length>4){
-    match=Object.values(DB.knowledge.products).find(v=>{
-      const aliasNorm=normalizeKey(v.alias||'');
-      return aliasNorm.length>4&&(aliasNorm.includes(nameNorm)||nameNorm.includes(aliasNorm));
-    });
-  }
 
   if(match){
     prod.assignedTo=match.shared?null:match.person;
@@ -905,28 +881,27 @@ function learnFromTicket(t){
     const key=normalizeKey(prod.name||'');if(!key) return;
     const ocrRaw=(prod.rawName||'').trim().toUpperCase();
     const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};
+    // Actualizar entrada principal (clave = nombre normalizado actual)
     DB.knowledge.products[key]={
       person:prod.assignedTo||null,
       shared:!prod.assignedTo,
       pct1:prod.pct1||50,
       count:(ex.count||0)+1,
       category:prod.category,
-      alias:prod.name, // nombre personalizado que el usuario ha editado
+      alias:prod.name,
       ocr_raw:ocrRaw&&!(ex.ocr_raw||[]).includes(ocrRaw)?[...(ex.ocr_raw||[]),ocrRaw]:(ex.ocr_raw||[])
     };
-    // Si el rawName es distinto al nombre normalizado, guardar también alias por rawName
-    if(ocrRaw&&prod.name){
-      const rawKey=normalizeKey(ocrRaw);
-      if(rawKey&&rawKey!==key){
-        DB.knowledge.products[rawKey]={
-          ...(DB.knowledge.products[rawKey]||{}),
-          alias:prod.name,
-          person:prod.assignedTo||null,
-          shared:!prod.assignedTo,
-          pct1:prod.pct1||50,
-          ocr_raw:[ocrRaw]
-        };
-      }
+    // Guardar también índice por rawName normalizado para búsqueda inversa
+    const rawKey=normalizeKey(ocrRaw);
+    if(rawKey&&rawKey!==key){
+      DB.knowledge.products[rawKey]={
+        ...(DB.knowledge.products[rawKey]||{}),
+        person:prod.assignedTo||null,
+        shared:!prod.assignedTo,
+        pct1:prod.pct1||50,
+        alias:prod.name,
+        ocr_raw:[ocrRaw]
+      };
     }
   });
 }
@@ -1158,9 +1133,7 @@ function renderSettings(){
     <div class="settings-section">
       <div class="settings-section-title">APIs</div>
       <div style="background:var(--bg1)">
-        <div class="settings-row" onclick="editApiKey()"><div class="settings-icon" style="background:#374151"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div><div class="settings-label">Gemini API Key</div><div class="settings-value">${DB.apiKey?'•••'+DB.apiKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
         <div class="settings-row" onclick="editVisionKey()"><div class="settings-icon" style="background:#1a3a2a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3M7 12h3M7 16h3M14 8h3M14 12h3M14 16h3"/></svg></div><div class="settings-label">Google Vision Key</div><div class="settings-value">${DB.visionKey?'•••'+DB.visionKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
-        <div class="settings-row" onclick="toggleLightMode()"><div class="settings-icon" style="background:#333"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></div><div class="settings-label">Modo claro</div><div class="settings-value">${DB.lightMode?'Activado':'Desactivado'}</div><div class="settings-arrow">›</div></div>
         <div class="settings-row" onclick="editGroqKey()"><div class="settings-icon" style="background:#2a1a3a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div><div class="settings-label">Groq Key (chat IA)</div><div class="settings-value">${DB.groqKey?'•••'+DB.groqKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
       </div>
     </div>
@@ -1183,39 +1156,6 @@ function renderSettings(){
     </div>
     <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente.</p>`;
 }
-function toggleLightMode(){
-  DB.lightMode=!DB.lightMode;
-  S.set('lightMode',DB.lightMode);
-  saveDB();
-  applyTheme();
-  renderSettings();
-}
-function applyTheme(){
-  const r=document.documentElement;
-  if(DB.lightMode){
-    r.style.setProperty('--bg0','#d8d8e0');
-    r.style.setProperty('--bg1','#c8c8d2');
-    r.style.setProperty('--bg2','#b8b8c4');
-    r.style.setProperty('--bg3','#a8a8b6');
-    r.style.setProperty('--bg4','#9898a8');
-    r.style.setProperty('--txt0','#12121a');
-    r.style.setProperty('--txt1','#28283a');
-    r.style.setProperty('--txt2','#48485a');
-    r.style.setProperty('--txt3','#68687a');
-    r.style.setProperty('--brd','#9090a0');
-  } else {
-    r.style.setProperty('--bg0','#0d0d0f');
-    r.style.setProperty('--bg1','#141417');
-    r.style.setProperty('--bg2','#1c1c21');
-    r.style.setProperty('--bg3','#242429');
-    r.style.setProperty('--bg4','#2e2e35');
-    r.style.setProperty('--txt0','#f0f0f2');
-    r.style.setProperty('--txt1','#b8b8c2');
-    r.style.setProperty('--txt2','#737380');
-    r.style.setProperty('--txt3','#45454f');
-    r.style.setProperty('--brd','#2a2a32');
-  }
-}
 
 function editKnowledgeProducts(){
   const prods=Object.entries(DB.knowledge.products).sort((a,b)=>a[0].localeCompare(b[0]));
@@ -1223,17 +1163,17 @@ function editKnowledgeProducts(){
   const personOpts=`<option value="">Común</option>`+DB.persons.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   const rows=prods.map(([key,v])=>`
     <div style="padding:10px 0;border-bottom:1px solid var(--brd)">
+      <div style="font-size:10px;color:var(--txt3);margin-bottom:4px">Original: ${v.ocr_raw?.[0]||key}</div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <input value="${v.alias||key}" style="background:transparent;border:none;border-bottom:1px solid var(--brd);font-size:14px;font-weight:500;color:var(--txt0);flex:1;padding:2px 0"
+        <input value="${v.alias||key}"
+          style="background:transparent;border:none;border-bottom:1px solid var(--brd);font-size:14px;font-weight:500;color:var(--txt0);flex:1;padding:2px 0"
           onchange="renameKnowledgeProduct('${key}',this.value)"/>
         <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:11px;color:var(--txt3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${v.ocr_raw?.[0]||key}</span>
-        <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:12px;padding:3px 6px;width:auto;flex-shrink:0;border-radius:var(--rad-xs)">
-          ${`<option value="" ${!v.person?'selected':''}>Común</option>`+DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}
-        </select>
-      </div>
+      <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:12px;padding:4px 8px;width:100%;border-radius:var(--rad-xs);background:var(--bg3);color:var(--txt0);border:1px solid var(--brd)">
+        <option value="" ${!v.person?'selected':''}>Comun</option>
+        ${DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}
+      </select>
     </div>`).join('');
   openModal(`<div class="modal-title">Productos aprendidos</div>
     <p style="font-size:12px;color:var(--txt2);margin-bottom:12px">Edita el nombre, asigna a persona o elimina. Los cambios se aplican en futuros tickets.</p>
@@ -1277,7 +1217,6 @@ function removePerson(idx){if(DB.persons.length<=1){showToast('Debe haber al men
 function savePerson(idx){const n=document.getElementById('ep-name').value.trim();if(n)DB.persons[idx].name=n;saveDB();closeModal();renderSettings();}
 function forgetCard(l4){delete DB.knowledge.cards[l4];saveDB();renderSettings();}
 function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimiento?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">Se eliminan los productos aprendidos. Los tickets se conservan.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="DB.knowledge.products={};saveDB();closeModal();renderSettings();showToast('Borrado')">Borrar</button></div>`);}
-function editApiKey(){openModal(`<div class="modal-title">API Key de Gemini</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key gratuita en aistudio.google.com</p><input type="password" id="new-apikey" value="${DB.apiKey||''}" placeholder="AIza..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-apikey').value.trim();if(!k)return;DB.apiKey=k;S.set('apiKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key en <strong style="color:var(--accent)">console.cloud.google.com</strong> → APIs y servicios → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Key gratuita en <strong style="color:var(--accent)">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editOcrKey(){openModal(`<div class="modal-title">API Key de OCR.space</div><p style="font-size:13px;color:var(--txt2);margin-bottom:4px">Key gratuita en <strong style="color:var(--accent)">ocr.space/ocrapi</strong></p><p style="font-size:12px;color:var(--txt3);margin-bottom:12px">Deja <em>helloworld</em> para usar la key demo (limitada)</p><input type="password" id="new-ocrkey" value="${DB.ocrKey||'helloworld'}" placeholder="helloworld"/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-ocrkey').value.trim()||'helloworld';DB.ocrKey=k;S.set('ocrKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
@@ -1381,11 +1320,10 @@ function generateAIQuestions(ticket){
 
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
-applyTheme();
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
-    if(!DB.visionKey&&!DB.apiKey){
+    if(!DB.visionKey){
       startSetup();
     }else{
       document.getElementById('app').style.display='flex';
@@ -1402,10 +1340,12 @@ setTimeout(()=>{
   style.textContent=`
     @media(min-width:520px){
       body{display:flex;justify-content:center;align-items:flex-start;background:#050507;min-height:100vh;}
-      #app{width:390px;flex-shrink:0;border-left:1px solid #1a1a22;border-right:1px solid #1a1a22;box-shadow:0 0 80px rgba(0,0,0,.9);}
-      #nav{width:390px;}
-      #setup-screen{max-width:390px;margin:0 auto;}
-      .ticket-editor,.me-sheet,.ai-sheet{width:390px;left:50%;transform:translateX(-50%);}
+      #app{width:33vw;min-width:340px;max-width:480px;flex-shrink:0;border-left:1px solid #1a1a22;border-right:1px solid #1a1a22;box-shadow:0 0 80px rgba(0,0,0,.9);}
+      #nav{width:33vw;min-width:340px;max-width:480px;}
+      #setup-screen{width:33vw;min-width:340px;max-width:480px;margin:0 auto;}
+      .ticket-editor,.me-sheet,.ai-sheet{width:33vw;min-width:340px;max-width:480px;left:50%;transform:translateX(-50%);}
+      .modal-overlay{justify-content:center;}
+      .modal-sheet{width:33vw;min-width:340px;max-width:480px;border-radius:20px;margin-bottom:0;position:relative;align-self:flex-end;margin:auto auto 0;}
     }
   `;
   document.head.appendChild(style);
