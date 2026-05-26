@@ -2,7 +2,7 @@
 //  CLARITO — app.js
 // ═══════════════════════════════════════════════════════════════
 
-// ── STORAGE ────────────────────────────────────────────────────-
+// ── STORAGE ────────────────────────────────────────────────────
 const S = {
   get(k){try{const v=localStorage.getItem('clarito_'+k);return v?JSON.parse(v):null}catch{return null}},
   set(k,v){localStorage.setItem('clarito_'+k,JSON.stringify(v))}
@@ -595,7 +595,7 @@ function renderHome(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header">
       <div style="display:flex;align-items:center;gap:10px">
-        <img src="icon.png" style="width:28px;height:28px;border-radius:8px;object-fit:cover" onerror="this.style.display='none'"/>
+        <img src="icon.png" style="width:28px;height:28px;border-radius:8px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/>
         <div><h1>Clarito ✦</h1><p>La contabilidad doméstica casi invisible</p></div>
       </div>
     </div>
@@ -1022,8 +1022,8 @@ function renderStats(){
       <div class="stat-card"><div class="stat-label">Tickets totales</div><div class="stat-value">${allT.length}</div></div>
     </div>
     ${anomalies.length?`<div style="margin:0 16px 14px">${anomalies.map(a=>`<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:var(--rad-sm);padding:10px 12px;margin-bottom:8px;font-size:13px;color:#f59e0b">⚠️ ${a}</div>`).join('')}</div>`:''}
-    ${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat,emoji:'📦'};return`<div class="bar-row"><div class="bar-name">${ci.emoji} ${ci.label}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}
-    ${storeSorted.length?`<div class="recent-label">Supermercados</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">🏪 ${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
+    ${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}
+    ${storeSorted.length?`<div class="recent-label">Supermercados</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
     <div class="recent-label">Despensa estimada</div>${renderInventorySection()}`;
 }
 function detectAnomalies(){
@@ -1077,13 +1077,40 @@ function renderSettings(){
     <div class="settings-section">
       <div class="settings-section-title">Datos</div>
       <div style="background:var(--bg1)">
-        <div class="settings-row"><div class="settings-label">Productos aprendidos</div><div class="settings-value">${Object.keys(DB.knowledge.products).length}</div></div>
+        <div class="settings-row" onclick="editKnowledgeProducts()"><div class="settings-label">Productos aprendidos</div><div class="settings-value">${Object.keys(DB.knowledge.products).length}</div><div class="settings-arrow">›</div></div>
         <div class="settings-row" onclick="clearKnowledge()"><div class="settings-label" style="color:var(--red)">Borrar conocimiento IA</div></div>
         <div class="settings-row" onclick="exportData()"><div class="settings-label">Exportar JSON</div><div class="settings-arrow">↓</div></div>
         <div class="settings-row" onclick="resetAll()"><div class="settings-label" style="color:var(--red)">Borrar todos los datos</div></div>
       </div>
     </div>
     <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente.</p>`;
+}
+function editKnowledgeProducts(){
+  const prods=Object.entries(DB.knowledge.products).sort((a,b)=>a[0].localeCompare(b[0]));
+  if(!prods.length){showToast('No hay productos aprendidos todavía');return;}
+  const rows=prods.map(([key,v])=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--brd)">
+      <div style="flex:1;min-width:0">
+        <input value="${v.alias||key}" style="background:transparent;border:none;font-size:14px;font-weight:500;color:var(--txt0);width:100%;padding:0"
+          onchange="renameKnowledgeProduct('${key}',this.value)"/>
+        <div style="font-size:11px;color:var(--txt3);margin-top:2px">${v.ocr_raw?.[0]||key}</div>
+      </div>
+      <div style="font-size:12px;color:${v.shared?'var(--blue)':personColor(v.person)};font-weight:600;flex-shrink:0">${v.shared?'Común':personName(v.person)}</div>
+      <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
+    </div>`).join('');
+  openModal(`<div class="modal-title">Productos aprendidos</div>
+    <p style="font-size:12px;color:var(--txt2);margin-bottom:12px">Edita el nombre o elimina productos. El nombre editado se aplicará automáticamente en futuros tickets.</p>
+    <div style="max-height:60vh;overflow-y:auto">${rows}</div>
+    <button class="btn-primary" style="margin-top:14px" onclick="saveDB();closeModal();showToast('Guardado ✓');renderSettings()">Listo</button>`);
+}
+function renameKnowledgeProduct(key,newName){
+  if(!newName.trim()) return;
+  if(DB.knowledge.products[key]) DB.knowledge.products[key].alias=newName.trim();
+}
+function deleteKnowledgeProduct(key){
+  delete DB.knowledge.products[key];
+  saveDB();
+  editKnowledgeProducts(); // refresca el modal
 }
 function addPerson(){const idx=DB.persons.length;DB.persons.push({id:'p'+(idx+1),name:'Persona '+(idx+1),color:PRESET_COLORS[idx%PRESET_COLORS.length],cards:[]});saveDB();renderSettings();editPerson(idx);}
 function editPerson(idx){
@@ -1151,8 +1178,40 @@ async function sendAIMessage(){
   const msg=input.value.trim();if(!msg)return;
   input.value='';
   DB.aiConvMessages.push({role:'user',content:msg});renderAIChat();
+
+  // Construir contexto detallado con datos reales
   const {paid,owes,amount}=calcBalance();
-  const ctx='Eres el asistente de Clarito, app de gastos compartidos del hogar. Personas: '+DB.persons.map(p=>p.name).join(', ')+'. Balance: '+(amount>0.01?personName(owes)+' debe '+fmt(amount):'al día')+'. Tickets: '+DB.tickets.filter(t=>t.confirmed).length+'. Responde en español, breve y amigable. Pregunta: '+msg;
+  const now=new Date();
+  const thisMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  // Gasto por persona este mes
+  const monthByPerson={};
+  DB.persons.forEach(p=>monthByPerson[p.id]=0);
+  DB.tickets.filter(t=>t.confirmed&&t.date&&t.date.startsWith(thisMonth)).forEach(t=>{
+    (t.products||[]).forEach(prod=>{
+      const price=parseFloat(prod.finalPrice||prod.price||0);
+      if(prod.assignedTo) monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;
+      else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;});
+    });
+  });
+  DB.expenses.filter(e=>e.confirmed&&e.date&&e.date.startsWith(thisMonth)).forEach(e=>{
+    const amt=parseFloat(e.total||0);
+    DB.persons.forEach((p,i)=>{const pct=i===0?e.split1:100-e.split1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*(pct||50)/100;});
+  });
+
+  // Últimos 5 tickets
+  const recentTickets=DB.tickets.filter(t=>t.confirmed).slice(-5).map(t=>`${t.store||'?'} ${t.date} ${fmt(t.total)} (pagó ${personName(t.payer)})`).join('; ');
+
+  const ctx=`Eres el asistente de Clarito, app de gastos compartidos del hogar. Responde SIEMPRE con datos concretos, nunca preguntes si quieren ver algo, muestra directamente los números.
+DATOS ACTUALES:
+- Personas: ${DB.persons.map(p=>p.name).join(', ')}
+- Balance total: ${amount>0.01?personName(owes)+' debe '+fmt(amount):'cuentas al día'}
+- Pagado en total: ${DB.persons.map(p=>p.name+' '+fmt(paid[p.id]||0)).join(', ')}
+- Gasto este mes (${thisMonth}): ${DB.persons.map(p=>p.name+' '+fmt(monthByPerson[p.id]||0)).join(', ')}
+- Tickets confirmados: ${DB.tickets.filter(t=>t.confirmed).length}
+- Últimos tickets: ${recentTickets||'ninguno'}
+Responde en español, breve y directo. Si preguntan cuánto gastó alguien, da el número exacto. Pregunta: ${msg}`;
+
   try{
     const resp=await callGroq(ctx);
     DB.aiConvMessages.push({role:'bot',content:resp});saveDB();renderAIChat();
