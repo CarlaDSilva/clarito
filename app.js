@@ -19,6 +19,7 @@ const PRESET_COLORS = [
   '#eab308', // amarillo
   '#14b8a6', // turquesa
   '#f43f5e', // coral
+  '#ffb3c6', // rosa bebé
 ];
 
 let DB = {
@@ -297,9 +298,9 @@ function parseTicketText(text){
   // ── Detectar productos ──
   const SKIP_RX=/^(total|subtotal|iva|base\s*imp|importe|a\s*pagar|tarjeta|visa|mastercard|maestro|amex|cambio|efectivo|devoluci|entrega|gracias|ticket|n[uú]mero|fecha|hora|caja|operador|factura|simplificada|nif|cif|www\.|https?:|descripci|p\.\s*unit|imp\.\s*\(?€|secc|tel[eé]f|op:|pol\.|s\.a\.|a-\d|c\.i\.f|bienvenid|hasta\s*pronto|recib|cuota|socio|puntos|ahorro|dto\.|descuento\s|premio|bono|cupon|vale)/i;
   const PRICE_ONLY_RX=/^\s*(\d{1,3}[.,]\d{2})\s*€?\s*$/;
+  const KG_INFO_RX=/\d+[.,]\d+\s*kg|€\/kg|eur\/kg|\d+[.,]\d+\s*[xX]\s*\d+[.,]\d+/i; // línea de info kg (NO saltar el nombre)
   const INLINE_PRICE_RX=/^(.+?)\s{2,}(\d{1,3}[.,]\d{2})\s*€?\s*$/;
   const QTY_PREFIX_RX=/^(\d+)\s+(.+)/;
-  const KG_LINE_RX=/\d+[.,]\d+\s*kg|\d+[.,]\d+\s*x\s*\d+[.,]\d+|€\/kg|eur\/kg|\d+[.,]\d{3}\s/i;
 
   function cleanProductName(raw){
     return raw
@@ -309,23 +310,28 @@ function parseTicketText(text){
       .trim();
   }
 
+  // Determina si una línea es un "precio solo" o info de kg que debemos saltar al recoger precios
+  function isPriceLine(l){return PRICE_ONLY_RX.test(l);}
+  function isKgInfoLine(l){return KG_INFO_RX.test(l)&&!PRICE_ONLY_RX.test(l);}
+
   const products=[];
   let i=0;
   while(i<lines.length){
     const line=lines[i];
     i++;
 
-    if(SKIP_RX.test(line.trim())) continue;
-    if(line.trim().length<3) continue;
-    if(line.includes('%')) continue;
-    if(KG_LINE_RX.test(line)) continue;
+    const trimmed=line.trim();
+    if(trimmed.length<2) continue;
+    if(SKIP_RX.test(trimmed)) continue;
+    if(trimmed.includes('%')) continue;
+    // No saltar líneas de kg aquí — solo ignorarlas en la recolección de precios
 
     // Formato inline: NOMBRE    1,45
     const inlineM=line.match(INLINE_PRICE_RX);
     if(inlineM){
       const rawName=inlineM[1].trim();
       const price=parseFloat(inlineM[2].replace(',','.'));
-      if(price>0&&price<=500&&rawName.length>=2&&!/^\d+$/.test(rawName)&&!rawName.includes('%')&&!SKIP_RX.test(rawName)){
+      if(price>0&&price<=500&&rawName.length>=2&&!/^\d+$/.test(rawName)&&!rawName.includes('%')&&!SKIP_RX.test(rawName)&&!isKgInfoLine(rawName)){
         const qm=rawName.match(QTY_PREFIX_RX);
         const qty=qm?parseInt(qm[1]):1;
         const name=cleanProductName(qm?qm[2]:rawName);
@@ -335,36 +341,43 @@ function parseTicketText(text){
       continue;
     }
 
-    // Formato Mercadona: nombre en una línea, precios en líneas siguientes
-    const isProductLine=!PRICE_ONLY_RX.test(line)&&line.trim().length>=3&&!/^\d{1,2}\/\d{2}\/\d{2,4}/.test(line)&&!/^\d{1,2}:\d{2}/.test(line);
-    if(isProductLine){
-      const priceLines=[];
-      while(i<lines.length&&PRICE_ONLY_RX.test(lines[i])){
-        priceLines.push({val:parseFloat(lines[i].replace(',','.')), raw:lines[i]});
-        i++;
-      }
-      if(priceLines.length>0){
-        let price;
-        if(priceLines.length>=3){
-          price=priceLines[priceLines.length-1].val;
-        } else if(priceLines.length===2){
-          price=Math.max(priceLines[0].val, priceLines[1].val);
-        } else {
-          price=priceLines[0].val;
-        }
+    // Si es una línea de solo precio o info de kg, saltar (ya la recogerá el bloque de arriba)
+    if(isPriceLine(trimmed)||isKgInfoLine(trimmed)) continue;
 
-        const rawName=line.trim();
-        if(SKIP_RX.test(rawName)) continue;
-        if(rawName.includes('%')) continue;
-        if(rawName.length<2) continue;
-        const qm=rawName.match(QTY_PREFIX_RX);
-        const qty=qm?parseInt(qm[1]):1;
-        const unitPrice=qty>1?parseFloat((price/qty).toFixed(2)):price;
-        const name=cleanProductName(qm?qm[2]:rawName);
-        if(!/^\d+$/.test(name)&&name.length>=2)
-          products.push(makeProduct(name,rawName,unitPrice,qty));
+    // Línea de fecha/hora — saltar
+    if(/^\d{1,2}\/\d{2}\/\d{2,4}/.test(trimmed)||/^\d{1,2}:\d{2}/.test(trimmed)) continue;
+
+    // Formato Mercadona: nombre en una línea, precios/info en líneas siguientes
+    // Recoger todas las líneas siguientes que sean precio o info de kg, hasta la siguiente línea de producto
+    const priceLines=[];
+    let j=i;
+    while(j<lines.length){
+      const next=lines[j].trim();
+      if(isPriceLine(next)){
+        priceLines.push(parseFloat(next.replace(',','.')));
+        j++;
+      } else if(isKgInfoLine(next)){
+        j++; // saltar línea de info kg sin añadir precio
+      } else {
+        break; // siguiente producto
       }
     }
+
+    if(priceLines.length>0){
+      i=j; // avanzar el cursor
+      // El precio total es el último (Mercadona siempre pone unit, luego total)
+      const price=priceLines[priceLines.length-1];
+
+      const rawName=trimmed;
+      if(SKIP_RX.test(rawName)||rawName.includes('%')||rawName.length<2) continue;
+      const qm=rawName.match(QTY_PREFIX_RX);
+      const qty=qm?parseInt(qm[1]):1;
+      const unitPrice=qty>1?parseFloat((price/qty).toFixed(2)):price;
+      const name=cleanProductName(qm?qm[2]:rawName);
+      if(!/^\d+$/.test(name)&&name.length>=2)
+        products.push(makeProduct(name,rawName,unitPrice,qty));
+    }
+    // Si no hay priceLines, es una línea de texto sin precio — ignorar
   }
 
   return{store,date,time,last4,total,products,errors:[],warnings:[]};
@@ -740,9 +753,9 @@ function renderTicketEditor(){
         <div class="te-section-title">Información</div>
         <div class="card" style="margin:0 0 12px">
           <div class="field-row"><label class="field-label">Supermercado</label><input value="${t.store||''}" placeholder="Ej: Mercadona" oninput="currentTicket.store=this.value"/></div>
-          <div style="display:flex;gap:10px;margin-top:10px">
-            <div style="flex:2"><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" onchange="currentTicket.date=this.value"/></div>
-            <div style="flex:1"><label class="field-label">Hora</label><input type="time" value="${t.time||''}" onchange="currentTicket.time=this.value" placeholder="14:09"/></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <div style="flex:3"><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" style="font-size:13px;padding:8px 10px" onchange="currentTicket.date=this.value"/></div>
+            <div style="flex:2"><label class="field-label">Hora</label><input type="time" value="${t.time||''}" style="font-size:13px;padding:8px 10px" onchange="currentTicket.time=this.value"/></div>
           </div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Total</label><input type="number" value="${t.total||''}" placeholder="0.00" step="0.01" oninput="currentTicket.total=parseFloat(this.value)||0"/></div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Últimos 4 dígitos tarjeta</label><input value="${t.last4||''}" placeholder="4821" maxlength="4" oninput="currentTicket.last4=this.value" style="letter-spacing:3px;font-weight:600"/></div>
@@ -1090,11 +1103,11 @@ function renderStats(){
 
     ${anomalies.length?`<div style="margin:0 16px 14px">${anomalies.map(a=>`<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.2);border-radius:var(--rad-sm);padding:10px 12px;margin-bottom:8px;font-size:13px;color:#f59e0b">${a}</div>`).join('')}</div>`:''}
 
-    ${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}
+    ${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row" style="gap:8px"><div class="bar-name" style="width:130px">${name}</div><div class="bar-track" style="max-width:120px"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}
 
-    ${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}
+    ${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row" style="gap:8px"><div class="bar-name" style="width:130px">${ci.label||cat}</div><div class="bar-track" style="max-width:120px"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}
 
-    ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
+    ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row" style="gap:8px"><div class="bar-name" style="width:130px">${s}</div><div class="bar-track" style="max-width:120px"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
 
     <div class="recent-label">Despensa estimada</div>${renderInventorySection()}`;
 }
@@ -1123,6 +1136,7 @@ function getPredictions(){
 function renderSettings(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><div style="display:flex;align-items:flex-end;gap:12px"><img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/><h1 style="padding-bottom:2px">Configuración</h1></div></div>
+    <div style="height:8px"></div>
     <div class="settings-section">
       <div class="settings-section-title">Personas (${DB.persons.length})</div>
       <div style="background:var(--bg1)">
@@ -1171,7 +1185,7 @@ function editKnowledgeProducts(){
         <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
       </div>
       <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:12px;padding:4px 8px;width:100%;border-radius:var(--rad-xs);background:var(--bg3);color:var(--txt0);border:1px solid var(--brd)">
-        <option value="" ${!v.person?'selected':''}>Comun</option>
+        <option value="" ${!v.person?'selected':''}>Común</option>
         ${DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}
       </select>
     </div>`).join('');
@@ -1338,6 +1352,13 @@ setTimeout(()=>{
 (function injectResponsiveCSS(){
   const style=document.createElement('style');
   style.textContent=`
+    /* Bigger small text */
+    .field-label{font-size:13px!important;}
+    .ticket-date,.ticket-payer,.product-name-raw,.bar-amt{font-size:13px!important;}
+    .badge,.settings-value,.stat-label{font-size:12px!important;}
+    .recent-label{font-size:14px!important;}
+    .nav-btn span{font-size:11px!important;}
+
     @media(min-width:520px){
       body{display:flex;justify-content:center;align-items:flex-start;background:#050507;min-height:100vh;}
       #app{width:33vw;min-width:340px;max-width:480px;flex-shrink:0;border-left:1px solid #1a1a22;border-right:1px solid #1a1a22;box-shadow:0 0 80px rgba(0,0,0,.9);}
