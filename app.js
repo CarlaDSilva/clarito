@@ -19,6 +19,7 @@ let DB = {
   apiKey:'',
   ocrKey:'helloworld',
   visionKey:'',
+  groqKey:'',
   persons:[
     {id:'p1',name:'Persona 1',color:'#7c6ef5',cards:[]},
     {id:'p2',name:'Persona 2',color:'#3ecf8e',cards:[]}
@@ -363,12 +364,16 @@ function parseTicketText(text){
   return{store,date,time,last4,total,products,errors:[],warnings:[]};
 }
 
-function makeProduct(name,rawName,price,qty=1){
+function makeProduct(name,rawName,unitPrice,qty=1){
+  const total=parseFloat((unitPrice*qty).toFixed(2));
   return{
     rawName,
     name:normalizeProdName(name),
-    price,finalPrice:price,discount:0,qty,
-    confidence:name.length>3&&price>0.1?0.8:0.5,
+    price:unitPrice,
+    unitPrice,
+    finalPrice:total,
+    discount:0,qty,
+    confidence:name.length>3&&unitPrice>0.1?0.8:0.5,
     category:guessCategory(name),
     assignedTo:null,shared:true,pct1:50
   };
@@ -441,22 +446,54 @@ ${knownProds?' Productos conocidos: '+knownProds:''}`;
   catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSON inválido de Gemini');}
 }
 
-// ── GEMINI TEXTO (chat IA) ──────────────────────────────────────
-async function callGemini(prompt){
-  const key=DB.apiKey;
-  if(!key) throw new Error('No hay API key. Ve a Configuración.');
-  const body={
-    contents:[{role:'user',parts:[{text:prompt}]}],
-    generationConfig:{temperature:0.2,maxOutputTokens:1024}
-  };
-  const res=await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${key}`,
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}
-  ).catch(fetchErr=>{throw new Error('Red bloqueada ('+fetchErr.name+')');});
-  if(res.status===429) throw new Error('Límite de API alcanzado. Espera 1 minuto.');
-  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'HTTP '+res.status);}
+// ── GROQ (chat IA + fallback parser) ──────────────────────────
+async function callGroq(prompt){
+  const key=DB.groqKey;
+  if(!key) throw new Error('No hay API key de Groq. Ve a Configuración.');
+  const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+    body:JSON.stringify({
+      model:'llama-3.1-8b-instant',
+      messages:[{role:'user',content:prompt}],
+      temperature:0.2,
+      max_tokens:1024
+    })
+  }).catch(e=>{throw new Error('Red bloqueada: '+e.message);});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}
   const data=await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text||'';
+  return data.choices?.[0]?.message?.content||'';
+}
+
+async function groqParseText(ocrText){
+  const key=DB.groqKey;
+  if(!key) throw new Error('Sin API key Groq');
+  const knownProds=Object.entries(DB.knowledge.products).slice(0,8)
+    .map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');
+  const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:
+{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}
+Ignora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.
+Para productos con cantidad (ej: "2 PAN 0,76"), price y unitPrice deben ser el precio unitario (0,38), qty=2.
+Texto:
+${ocrText}
+${knownProds?' Conocidos: '+knownProds:''}`;
+
+  const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},
+    body:JSON.stringify({
+      model:'llama-3.1-8b-instant',
+      messages:[{role:'user',content:prompt}],
+      temperature:0.1,
+      max_tokens:2048
+    })
+  });
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}
+  const data=await res.json();
+  const text=data.choices?.[0]?.message?.content||'';
+  const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+  try{return JSON.parse(clean);}
+  catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSON inválido de Groq');}
 }
 
 // ── PROCESS FILE ───────────────────────────────────────────────
@@ -493,22 +530,23 @@ async function processFile(file){
       result=parseTicketText(ocrText);
       console.log('Parser local:', result.products.length, 'productos');
 
-      // ── PASO 3: Si el parser saca pocos productos y hay API key, mejora con Gemini ──
-      if(result.products.length<2&&DB.apiKey){
+      // ── PASO 3: Si el parser saca pocos productos, mejora con Groq ──
+      if(result.products.length<2&&DB.groqKey){
         setOCRStatus('Mejorando con IA...');
         try{
-          const geminiResult=await geminiParseText(ocrText);
-          // Fusionar: Gemini manda en productos, pero mantenemos store/date/total del parser si Gemini no los detectó
-          result.products=geminiResult.products||result.products;
-          if(geminiResult.store) result.store=geminiResult.store;
-          if(geminiResult.date) result.date=geminiResult.date;
-          if(geminiResult.total&&geminiResult.total>0) result.total=geminiResult.total;
-          if(geminiResult.last4) result.last4=geminiResult.last4;
-          result.warnings=[...(result.warnings||[]),...(geminiResult.warnings||[])];
-          console.log('Gemini mejoró a:', result.products.length, 'productos');
-        }catch(gemErr){
-          console.warn('Gemini fallback falló:', gemErr.message);
-          result.warnings.push('IA no disponible: '+gemErr.message);
+          const groqResult=await groqParseText(ocrText);
+          if(groqResult.products?.length>result.products.length){
+            result.products=groqResult.products.map(p=>({...p,unitPrice:p.unitPrice||p.price,finalPrice:parseFloat(((p.unitPrice||p.price)*(p.qty||1)).toFixed(2))}));
+          }
+          if(groqResult.store) result.store=groqResult.store;
+          if(groqResult.date) result.date=groqResult.date;
+          if(groqResult.time) result.time=groqResult.time;
+          if(groqResult.total&&groqResult.total>0) result.total=groqResult.total;
+          if(groqResult.last4) result.last4=groqResult.last4;
+          console.log('Groq mejoró a:', result.products.length, 'productos');
+        }catch(groqErr){
+          console.warn('Groq fallback falló:', groqErr.message);
+          result.warnings.push('IA no disponible: '+groqErr.message);
         }
       }
     } else if(DB.apiKey){
@@ -757,15 +795,16 @@ function renderProductRow(prod,i){
   const confClass=prod.confidence>=0.85?'conf-high':prod.confidence>=0.6?'conf-mid':'conf-low';
   const assignedTo=prod.assignedTo;
   const isShared=!assignedTo;
-  const price=(prod.finalPrice??prod.price??0);
-  const priceDisplay=price>0?price.toFixed(2):'';
+  const qty=prod.qty||1;
+  // unitPrice es el precio por unidad, finalPrice es el total (unitPrice * qty)
+  const unitPrice=prod.unitPrice??prod.finalPrice??prod.price??0;
+  const total=parseFloat((unitPrice*qty).toFixed(2));
+  const unitDisplay=unitPrice>0?unitPrice.toFixed(2):'';
 
   const personBtns=DB.persons.map(p=>{
     const active=assignedTo===p.id;
     return`<button class="assign-btn" style="background:${active?p.color+'33':'transparent'};color:${active?p.color:'var(--txt2)'};border-color:${active?p.color:'var(--brd)'};" onclick="assignProduct(${i},'${p.id}')">${p.name}</button>`;
   }).join('');
-
-  const pct=prod.pct1||50;
 
   return`<div class="product-row" id="prod-${i}">
     <div class="product-top">
@@ -775,17 +814,22 @@ function renderProductRow(prod,i){
         ${prod.rawName&&prod.rawName!==prod.name?`<div class="product-name-raw">${prod.rawName}</div>`:''}
       </div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-        <input class="product-price-input"
-          value="${priceDisplay}"
-          placeholder="0,00"
-          inputmode="decimal"
-          onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
-          onblur="if(!this.value)this.value='0.00';currentTicket.products[${i}].finalPrice=parsePrice(this.value)"
-          oninput="currentTicket.products[${i}].finalPrice=parsePrice(this.value)"/>
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="font-size:11px;color:var(--txt2)">u/</span>
+          <input class="product-price-input"
+            value="${unitDisplay}"
+            placeholder="0,00"
+            inputmode="decimal"
+            style="width:64px"
+            onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
+            onblur="if(!this.value)this.value='0.00';updateUnitPrice(${i},this.value)"
+            oninput="updateUnitPrice(${i},this.value)"/>
+        </div>
         <div style="display:flex;align-items:center;gap:4px">
           <button onclick="changeQty(${i},-1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
-          <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${prod.qty||1}×</span>
+          <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty}×</span>
           <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
+          <span id="total-${i}" style="font-size:12px;font-weight:700;color:var(--txt0);min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
         </div>
       </div>
     </div>
@@ -799,11 +843,21 @@ function renderProductRow(prod,i){
 }
 
 function assignProduct(i,pid){currentTicket.products[i].assignedTo=pid;currentTicket.products[i].shared=!pid;renderProductsList();}
+function updateUnitPrice(i,val){
+  const p=currentTicket.products[i];
+  p.unitPrice=parsePrice(val);
+  p.finalPrice=parseFloat((p.unitPrice*(p.qty||1)).toFixed(2));
+  const el=document.getElementById('total-'+i);
+  if(el) el.textContent=p.finalPrice>0?p.finalPrice.toFixed(2)+' €':'';
+}
 function changeQty(i,delta){
   const p=currentTicket.products[i];
   p.qty=Math.max(1,(p.qty||1)+delta);
-  const el=document.getElementById('qty-'+i);
-  if(el) el.textContent=p.qty+'×';
+  p.finalPrice=parseFloat(((p.unitPrice??p.price??0)*(p.qty)).toFixed(2));
+  const qEl=document.getElementById('qty-'+i);
+  if(qEl) qEl.textContent=p.qty+'×';
+  const tEl=document.getElementById('total-'+i);
+  if(tEl) tEl.textContent=p.finalPrice>0?p.finalPrice.toFixed(2)+' €':'';
 }
 function renderProductsList(){const el=document.getElementById('products-list');if(el)el.innerHTML=(currentTicket.products||[]).map((p,i)=>renderProductRow(p,i)).join('');}
 function editSplit(i){
@@ -1126,11 +1180,11 @@ async function sendAIMessage(){
   const {paid,owes,amount}=calcBalance();
   const ctx='Eres el asistente de Clarito, app de gastos compartidos del hogar. Personas: '+DB.persons.map(p=>p.name).join(', ')+'. Balance: '+(amount>0.01?personName(owes)+' debe '+fmt(amount):'al día')+'. Tickets: '+DB.tickets.filter(t=>t.confirmed).length+'. Responde en español, breve y amigable. Pregunta: '+msg;
   try{
-    const resp=await callGemini(ctx);
+    const resp=await callGroq(ctx);
     DB.aiConvMessages.push({role:'bot',content:resp});saveDB();renderAIChat();
     const msgs=document.getElementById('ai-messages');if(msgs)msgs.scrollTop=msgs.scrollHeight;
   }catch(err){
-    DB.aiConvMessages.push({role:'bot',content:'Error: '+err.message});renderAIChat();
+    DB.aiConvMessages.push({role:'bot',content:'⚠️ '+err.message});renderAIChat();
   }
 }
 function updateAIBadge(){
