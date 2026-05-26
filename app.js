@@ -567,19 +567,31 @@ function applyKnowledgeToProduct(prod){
   const rawNorm=normalizeKey(prod.rawName||'');
   const nameNorm=normalizeKey(prod.name||'');
 
-  // Search by: normalized name, normalized rawName, or alias match
+  // Search 1: exact normalized key
   let match=DB.knowledge.products[nameNorm]||DB.knowledge.products[rawNorm];
 
-  // Also search by alias: find any entry whose alias matches this product name/raw
+  // Search 2: any entry whose alias normalizes to our product name/raw
   if(!match){
     match=Object.values(DB.knowledge.products).find(v=>
       v.alias&&(normalizeKey(v.alias)===nameNorm||normalizeKey(v.alias)===rawNorm)
     );
   }
-  // Also search by ocr_raw array
+  // Search 3: ocr_raw uppercase match
   if(!match){
     const rawUpper=(prod.rawName||'').trim().toUpperCase();
-    if(rawUpper) match=Object.values(DB.knowledge.products).find(v=>v.ocr_raw?.includes(rawUpper));
+    const nameUpper=(prod.name||'').trim().toUpperCase();
+    if(rawUpper||nameUpper){
+      match=Object.values(DB.knowledge.products).find(v=>
+        v.ocr_raw&&(v.ocr_raw.includes(rawUpper)||v.ocr_raw.includes(nameUpper))
+      );
+    }
+  }
+  // Search 4: partial normalized key match (handles OCR noise)
+  if(!match&&nameNorm.length>4){
+    match=Object.values(DB.knowledge.products).find(v=>{
+      const aliasNorm=normalizeKey(v.alias||'');
+      return aliasNorm.length>4&&(aliasNorm.includes(nameNorm)||nameNorm.includes(aliasNorm));
+    });
   }
 
   if(match){
@@ -611,9 +623,9 @@ function renderHome(){
   const recent=[...DB.tickets,...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6);
   document.getElementById('view').innerHTML=`
     <div class="screen-header">
-      <div style="display:flex;align-items:center;gap:12px">
+      <div style="display:flex;align-items:flex-end;gap:12px">
         <img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/>
-        <h1>Clarito</h1>
+        <h1 style="padding-bottom:2px">Clarito</h1>
       </div>
     </div>
     <div class="balance-hero">
@@ -1027,10 +1039,18 @@ function renderStats(){
   const monthT=allT.filter(t=>t.date&&t.date>=monthStart&&t.date<=monthEnd);
   const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
 
-  // Gasto real por persona este mes (parte proporcional de comunes + los suyos)
-  const monthByPerson={};
-  DB.persons.forEach(p=>monthByPerson[p.id]=0);
+  // Gasto real por persona este mes:
+  // - Lo que pagaron de su bolsillo (total del ticket si son el pagador)
+  // - Su parte proporcional de los gastos comunes
+  // - Sus gastos asignados directamente
+  const monthByPerson={}; // parte que les corresponde pagar
+  const monthPaidOut={}; // lo que realmente pagaron en caja
+  DB.persons.forEach(p=>{monthByPerson[p.id]=0;monthPaidOut[p.id]=0;});
+
   monthT.forEach(t=>{
+    // Lo que pagó en caja el pagador
+    monthPaidOut[t.payer]=(monthPaidOut[t.payer]||0)+(parseFloat(t.total)||0);
+    // Lo que le corresponde a cada uno
     (t.products||[]).forEach(prod=>{
       const price=parseFloat(prod.finalPrice||prod.price||0);
       if(!price) return;
@@ -1046,6 +1066,7 @@ function renderStats(){
   });
   DB.expenses.filter(e=>e.confirmed&&e.date&&e.date>=monthStart&&e.date<=monthEnd).forEach(e=>{
     const amt=parseFloat(e.total||0);
+    monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;
     DB.persons.forEach((p,i)=>{
       const pct=i===0?e.split1:100-e.split1;
       monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*(pct||50)/100;
@@ -1088,7 +1109,7 @@ function renderStats(){
         <div class="stat-card" style="border-color:${p.color}33">
           <div class="stat-label" style="color:${p.color}">${p.name}</div>
           <div class="stat-value" style="color:${p.color};font-size:18px">${fmt(monthByPerson[p.id]||0)}</div>
-          <div style="font-size:11px;color:var(--txt2);margin-top:4px">${monthTotal>0?Math.round((monthByPerson[p.id]||0)/monthTotal*100)+'% del total':''}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-top:4px">Pagó en caja: ${fmt(monthPaidOut[p.id]||0)}</div>
         </div>`).join('')}
     </div>
 
@@ -1126,7 +1147,7 @@ function getPredictions(){
 // ── SETTINGS ───────────────────────────────────────────────────
 function renderSettings(){
   document.getElementById('view').innerHTML=`
-    <div class="screen-header"><div style="display:flex;align-items:center;gap:12px"><img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/><h1>Configuración</h1></div></div>
+    <div class="screen-header"><div style="display:flex;align-items:flex-end;gap:12px"><img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1)" onerror="this.style.display='none'"/><h1 style="padding-bottom:2px">Configuración</h1></div></div>
     <div class="settings-section">
       <div class="settings-section-title">Personas (${DB.persons.length})</div>
       <div style="background:var(--bg1)">
@@ -1172,16 +1193,16 @@ function toggleLightMode(){
 function applyTheme(){
   const r=document.documentElement;
   if(DB.lightMode){
-    r.style.setProperty('--bg0','#f0f0f2');
-    r.style.setProperty('--bg1','#e8e8ec');
-    r.style.setProperty('--bg2','#dcdce4');
-    r.style.setProperty('--bg3','#d0d0da');
-    r.style.setProperty('--bg4','#c4c4ce');
-    r.style.setProperty('--txt0','#1a1a22');
-    r.style.setProperty('--txt1','#3a3a48');
-    r.style.setProperty('--txt2','#6a6a78');
-    r.style.setProperty('--txt3','#9a9aa8');
-    r.style.setProperty('--brd','#c8c8d4');
+    r.style.setProperty('--bg0','#d8d8e0');
+    r.style.setProperty('--bg1','#c8c8d2');
+    r.style.setProperty('--bg2','#b8b8c4');
+    r.style.setProperty('--bg3','#a8a8b6');
+    r.style.setProperty('--bg4','#9898a8');
+    r.style.setProperty('--txt0','#12121a');
+    r.style.setProperty('--txt1','#28283a');
+    r.style.setProperty('--txt2','#48485a');
+    r.style.setProperty('--txt3','#68687a');
+    r.style.setProperty('--brd','#9090a0');
   } else {
     r.style.setProperty('--bg0','#0d0d0f');
     r.style.setProperty('--bg1','#141417');
@@ -1379,11 +1400,12 @@ setTimeout(()=>{
 (function injectResponsiveCSS(){
   const style=document.createElement('style');
   style.textContent=`
-    @media(min-width:600px){
-      #app,#nav{max-width:480px!important;}
-      #setup-screen .setup-step{max-width:420px;}
-      body{display:flex;justify-content:center;background:#000;}
-      #app{border-left:1px solid #222;border-right:1px solid #222;box-shadow:0 0 60px rgba(0,0,0,.8);}
+    @media(min-width:520px){
+      body{display:flex;justify-content:center;align-items:flex-start;background:#050507;min-height:100vh;}
+      #app{width:390px;flex-shrink:0;border-left:1px solid #1a1a22;border-right:1px solid #1a1a22;box-shadow:0 0 80px rgba(0,0,0,.9);}
+      #nav{width:390px;}
+      #setup-screen{max-width:390px;margin:0 auto;}
+      .ticket-editor,.me-sheet,.ai-sheet{width:390px;left:50%;transform:translateX(-50%);}
     }
   `;
   document.head.appendChild(style);
