@@ -5,7 +5,7 @@
   --brd:#2a2a32;
   --rad:14px;--rad-sm:8px;--rad-xs:5px;
   --accent:#7c6ef5;--accent2:#5a4fd4;
-  --green:#1a7a4e;--red:#e5534b;--amber:#f59e0b;--blue:#4a9eff;--pink:#fce7f3;
+  --green:#4a7c5f;--red:#e5534b;--amber:#f59e0b;--blue:#4a9eff;--pink:#fce7f3;
 }
 html,body{height:100%;background:var(--bg0);color:var(--txt0);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',system-ui,sans-serif;overflow:hidden}
 button{background:none;border:none;cursor:pointer;color:inherit;font-family:inherit}
