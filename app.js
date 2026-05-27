@@ -360,7 +360,7 @@ function parseTicketText(text){
 
   // ── Cortar en línea de total / impuestos ──────────────────────
   // Todo lo que viene después de la primera línea de corte no es producto
-  const CUT_RX=/^(art\.?\s*total|total\s*a\s*pagar|tipo\s*$|====|base\s*$|cuota\s*$)/i;
+  const CUT_RX=/^(art\.?[\s.]*total|total[\s.]*a[\s.]*pagar|tipo\s*$|====+|base\s*$|cuota\s*$)/i;
   let cutIdx=lines.length;
   for(let ti=0;ti<lines.length;ti++){
     if(CUT_RX.test(lines[ti].trim())){cutIdx=ti;break;}
@@ -447,6 +447,8 @@ function parseTicketText(text){
           const last=out[out.length-1];
           if(!last.unitPrice||last.unitPrice===0){
             const pr=parsePrice(trimmed);
+            // Si el nombre suena a total/resumen, descartar en vez de añadir
+            if(/art.*total|total.*pagar/i.test(last.rawName||'')){out.pop();continue;}
             last.unitPrice=pr; last.price=pr;
             last.finalPrice=parseFloat((pr*(last.qty||1)).toFixed(2));
           }
@@ -468,6 +470,8 @@ function parseTicketText(text){
 
       // ── Nombre solo ──────────────────────────────────────────────
       if(!isKgInfo(trimmed)&&!WEIGHT_RX.test(trimmed)){
+        // Doble filtro: rechazar líneas que parezcan totales aunque lleguen aquí
+        if(/art.*total|total.*pagar/i.test(trimmed)) continue;
         const nm=cleanName(trimmed);
         if(nm.length>=2) out.push(makeProduct(nm,trimmed,0,1));
       }
