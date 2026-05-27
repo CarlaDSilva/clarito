@@ -812,19 +812,9 @@ document.getElementById('file-input').addEventListener('change',function(){if(th
 document.getElementById('camera-input').addEventListener('change',function(){if(this.files[0])processFile(this.files[0]);this.value='';});
 function triggerCamera(){document.getElementById('camera-input').click();}
 function triggerFileGallery(){
-  // En iOS, para abrir directamente la fototeca (sin menú) necesitamos un input
-  // con accept="image/*" sin capture, creado dinámicamente en el contexto del click
-  const tmp=document.createElement('input');
-  tmp.type='file';
-  tmp.accept='image/jpeg,image/png,image/heic,image/heif,image/webp';
-  // Sin atributo capture → iOS abre fototeca directamente (en algunos casos)
-  tmp.style.cssText='position:fixed;top:-9999px;opacity:0';
-  document.body.appendChild(tmp);
-  tmp.addEventListener('change',function(){
-    if(this.files[0]) processFile(this.files[0]);
-    document.body.removeChild(tmp);
-  });
-  tmp.click();
+  // Nota iOS: el sistema siempre muestra menú Fotos/Archivos/Cámara — es comportamiento nativo.
+  // Elegir "Fotos" en ese menú abre la fototeca. No es posible saltarse el menú desde una PWA.
+  document.getElementById('file-input').click();
 }
 
 // ── HOME ───────────────────────────────────────────────────────
@@ -936,7 +926,7 @@ function renderTickets(){
     <div class="screen-header"><h1>Tickets</h1><p>${tickets.length} registrados</p></div>
     <div class="upload-zone" onclick="triggerFileGallery()">
       <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3"/><polyline points="12 8 12 16"/><polyline points="8 12 12 8 16 12"/></svg>
-      <h3>Subir ticket desde galería</h3><p>Toca aquí o arrastra una imagen</p>
+      <h3>Subir ticket desde galería</h3><p>Elige "Fotos" en el menú que aparece</p>
     </div>
     <div class="upload-actions">
       <button class="btn-secondary" onclick="triggerCamera()">Cámara</button>
@@ -975,11 +965,11 @@ function renderTicketEditor(){
         <div class="card" style="margin:0 0 12px">
           <div class="field-row"><label class="field-label">Supermercado</label><input value="${t.store||''}" placeholder="Ej: Mercadona" oninput="currentTicket.store=this.value"/></div>
           <div class="datetime-row">
-            <div><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" onchange="currentTicket.date=this.value" style="font-size:15px;text-align:left;-webkit-text-align:left"/></div>
-            <div><label class="field-label">Hora</label><input type="time" value="${t.time||''}" onchange="currentTicket.time=this.value" style="font-size:15px;text-align:left;-webkit-text-align:left"/></div>
+            <div><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" onchange="currentTicket.date=this.value" style="font-size:15px"/></div>
+            <div><label class="field-label">Hora</label><input type="time" value="${t.time||''}" onchange="currentTicket.time=this.value" style="font-size:15px"/></div>
           </div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Total</label><input type="number" value="${t.total||''}" placeholder="0.00" step="0.01" oninput="currentTicket.total=parseFloat(this.value)||0"/></div>
-          <div class="field-row" style="margin-top:10px"><label class="field-label">Últimos 4 dígitos tarjeta</label><input value="${t.last4||''}" placeholder="4821" maxlength="4" oninput="currentTicket.last4=this.value" style="letter-spacing:3px;font-weight:600"/></div>
+          <div class="field-row" style="margin-top:10px"><label class="field-label">Últimos 4 dígitos tarjeta</label><input value="${t.last4||''}" placeholder="4821" maxlength="4" oninput="currentTicket.last4=this.value" style="letter-spacing:3px;font-weight:400"/></div>
         </div>
       </div>
       <div class="te-section">
@@ -1504,7 +1494,7 @@ async function sendAIMessage(){
   // 🥚 Easter egg
   if(/secreto/i.test(msg)){
     setTimeout(()=>{
-      DB.aiConvMessages.push({role:'bot',content:'🤫 Psst... esta app fue creada con mucho amor de Carli para Dami 💚'});
+      DB.aiConvMessages.push({role:'bot',content:'🤫 Psst… esta app fue creada con mucho amor de Carli para Dami ♥️'});
       saveDB();renderAIChat();
       const msgs=document.getElementById('ai-messages');if(msgs)msgs.scrollTop=msgs.scrollHeight;
     },600);
