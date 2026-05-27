@@ -32,7 +32,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   animation:logoPop .5s cubic-bezier(.34,1.56,.64,1) both;
   overflow:hidden;
 }
-#splash-logo{width:80px;height:80px;object-fit:contain;filter:invert(1);}
+#splash-logo{width:80px;height:80px;object-fit:contain;filter:invert(1) brightness(0.65);}
 @keyframes logoPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 .splash-title{font-size:32px;font-weight:800;letter-spacing:-1px;background:linear-gradient(135deg,#a78bfa,var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .splash-sub{font-size:14px;color:var(--txt2);letter-spacing:.2px}
@@ -196,6 +196,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .balance-card{margin:16px;background:linear-gradient(135deg,rgba(52,201,122,.12),rgba(74,158,255,.08));border:1px solid rgba(52,201,122,.2);border-radius:var(--rad);padding:20px}
 .bc-owes{font-size:16px;font-weight:600;margin-bottom:4px}
 .bc-amount{font-size:40px;font-weight:800;letter-spacing:-1px;color:var(--green)}
+.bc-owes.settled{color:var(--green)}
 .bc-detail{font-size:13px;color:var(--txt1);margin-top:6px}
 .settle-btn{margin:0 16px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border-radius:var(--rad-sm);padding:14px;font-size:16px;font-weight:700;width:calc(100% - 32px);text-align:center;transition:.15s;display:block}
 .settle-btn:active{opacity:.8;transform:scale(.98)}
