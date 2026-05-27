@@ -441,16 +441,17 @@ function parseTicketText(text){
         continue;
       }
 
-      // ── Precio suelto → actualiza el último producto sin precio ──
+      // ── Precio suelto → busca el primer producto sin precio (de atrás hacia adelante) ──
       if(isPrice(trimmed)){
-        if(out.length>0){
-          const last=out[out.length-1];
-          if(!last.unitPrice||last.unitPrice===0){
-            const pr=parsePrice(trimmed);
-            // Si el nombre suena a total/resumen, descartar en vez de añadir
-            if(/art.*total|total.*pagar/i.test(last.rawName||'')){out.pop();continue;}
-            last.unitPrice=pr; last.price=pr;
-            last.finalPrice=parseFloat((pr*(last.qty||1)).toFixed(2));
+        const pr=parsePrice(trimmed);
+        // Buscar hacia atrás el primer producto sin precio asignado aún
+        for(let k=out.length-1;k>=Math.max(0,out.length-4);k--){
+          const target=out[k];
+          if(!target.unitPrice||target.unitPrice===0){
+            if(/art.*total|total.*pagar/i.test(target.rawName||'')){out.splice(k,1);break;}
+            target.unitPrice=pr; target.price=pr;
+            target.finalPrice=parseFloat((pr*(target.qty||1)).toFixed(2));
+            break;
           }
         }
         continue;
