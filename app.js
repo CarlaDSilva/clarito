@@ -761,7 +761,7 @@ function getEmptyTicket(){
 document.getElementById('file-input').addEventListener('change',function(){if(this.files[0])processFile(this.files[0]);this.value='';});
 document.getElementById('camera-input').addEventListener('change',function(){if(this.files[0])processFile(this.files[0]);this.value='';});
 function triggerCamera(){document.getElementById('camera-input').click();}
-function triggerFileGallery(){document.getElementById('file-input').click();}
+function triggerFileGallery(){const inp=document.getElementById('file-input');inp.accept='image/jpeg,image/png,image/heic,image/webp,image/gif';inp.click();}
 
 // ── HOME ───────────────────────────────────────────────────────
 function renderHome(){
@@ -777,7 +777,7 @@ function renderHome(){
     <div class="balance-hero">
       <div class="balance-hero-label">Balance actual</div>
       ${bal.amount<0.01
-        ?`<div class="balance-hero-amount" style="color:#22a869">Cuentas al día</div>`
+        ?`<div class="balance-hero-amount" style="color:var(--green)">Cuentas al día</div>`
         :`<div class="balance-hero-amount" style="color:var(--amber)">${fmt(bal.amount)}</div>
           <div style="font-size:13px;color:var(--txt1);margin-top:4px">${personName(bal.owes)} debe a ${personName(bal.owes===DB.persons[0].id?DB.persons[1]?.id:DB.persons[0].id)}</div>`}
       <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px">
@@ -1147,7 +1147,7 @@ function renderBalance(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Balance</h1><p>Deudas y liquidaciones</p></div>
     ${amount<0.01
-      ?`<div class="balance-card"><div class="bc-owes" style="color:#22a869">Cuentas al día</div><div class="bc-amount" style="font-size:28px">Sin deuda</div></div>`
+      ?`<div class="balance-card"><div class="bc-owes" style="color:var(--green)">Cuentas al día</div><div class="bc-amount" style="font-size:28px">Sin deuda</div></div>`
       :`<div class="balance-card"><div class="bc-owes">${personName(owes)} debe a ${creditor?.name}</div><div class="bc-amount">${fmt(amount)}</div></div>
         <button class="settle-btn" onclick="settleAccounts()">Cuentas saldadas</button>`}
     <div style="margin:0 16px 14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">
@@ -1326,7 +1326,7 @@ function renderSettings(){
       </div>
     </div>
     <div style="margin:0 16px 16px"><button class="btn-secondary" style="width:100%" onclick="location.reload()">Actualizar app</button></div>
-    <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente.</p>`;
+    <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente</p>`;
 }
 
 function editKnowledgeProducts(){
