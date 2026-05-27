@@ -254,6 +254,8 @@ function parseTicketText(text){
   const PRICE_RX    = /^(\d{1,3}[.,]\d{2})\s*[)€]?\s*$/;          // línea que es solo un precio
   const INLINE_RX   = /^(.+?)\s{2,}(\d{1,3}[.,]\d{2})\s*€?\s*$/;  // NOMBRE   PRECIO (2+ espacios)
   const QTY_OPEN_RX = /^(\d+)\s*[xX]\s*\($/;                       // "3 x (" o "2x ("
+  // Formato qty en una sola línea que el OCR a veces produce: "3 x ( 1,29 )" o "X ( 1,29 )"
+  const QTY_INLINE_RX = /^(\d+|[xX])\s*[xX]?\s*\(\s*(\d{1,3}[.,]\d{2})\s*\)?$/;
   const BARCODE_RX  = /^\d{7,}$/;
   const SEP_RX      = /^[=\-*_.]{3,}$/;
   const DATE_RX     = [/((\d{2})[\/\-.](\d{2})[\/\-.](\d{2,4}))/,
@@ -346,15 +348,19 @@ function parseTicketText(text){
   // ── Detectar tarjeta ─────────────────────────────────────────
   let last4=null;
   for(const l of lines){
-    const m=l.match(/[*xX•]{4,}\s*(\d{4})/)||l.match(/tarjeta[^\d]*(\d{4})/i)||
-             l.match(/VISA[^\d]*(\d{4})/i)||l.match(/MASTERCARD[^\d]*(\d{4})/i)||
-             l.match(/(\d{4})\s*00\s*$/);
+    const m=l.match(/[Xx]{4,}(\d{4})/)||           // XXXXXXXXXXXX0925
+             l.match(/[*•]{4,}\s*(\d{4})/)||        // ****0925
+             l.match(/tarjeta[^\d]*(\d{4})/i)||
+             l.match(/VISA[^\d]*(\d{4})/i)||
+             l.match(/MASTERCARD[^\d]*(\d{4})/i)||
+             l.match(/DEBIT[^\d]*(\d{4})/i)||
+             l.match(/^[Xx\s*•]+(\d{4})\s*\d{2}\s*$/); // "XXXX0925 00" formato exacto
     if(m&&m[1]){ last4=m[1]; break; }
   }
 
   // ── Cortar en línea de total / impuestos ──────────────────────
   // Todo lo que viene después de la primera línea de corte no es producto
-  const CUT_RX=/^(art\.?\s*total|total\s*a\s*pagar|tipo\s*$|====|base\s*$|cuota\s*$)/i;
+  const CUT_RX=/^(art\.?\s*total|total\s*a\s*pagar|tipo\s*$|====|base\s*$|cuota\s*$|8\s*$)/i;
   let cutIdx=lines.length;
   for(let ti=0;ti<lines.length;ti++){
     if(CUT_RX.test(lines[ti].trim())){cutIdx=ti;break;}
@@ -393,10 +399,28 @@ function parseTicketText(text){
       if(BARCODE_RX.test(trimmed)||SEP_RX.test(trimmed)) continue;
       if(/^\d{1,2}[\/.:]\d{2}/.test(trimmed)) continue;
 
-      // ── Bloque qty "N x (" ──────────────────────────────────────
+      // ── Bloque qty "N x (" (multilínea) o "N x ( P,PP )" (una línea) ──────────────────────────────────────
       // El nombre YA está en out como último elemento (procesado justo antes).
       // Actualizamos ese último elemento con qty y unitPrice correctos.
-      const qtyM=trimmed.match(QTY_OPEN_RX);
+      const qtyInlineM=trimmed.match(QTY_INLINE_RX); // "3 x ( 1,29 )" en una sola línea
+      if(qtyInlineM){
+        const unitPrice=parseFloat(qtyInlineM[2].replace(',','.'));
+        // Inferir qty: si la siguiente línea es el precio total, qty = total / unitPrice
+        let qty=parseInt(qtyInlineM[1])||1;
+        if(i<pLines.length&&isPrice(pLines[i].trim())){
+          const blockTotal=parsePrice(pLines[i].trim());
+          const inferred=Math.round(blockTotal/unitPrice);
+          if(inferred>=1&&inferred<=20&&Math.abs(inferred*unitPrice-blockTotal)<0.02) qty=inferred;
+          i++; // consumir precio total
+        }
+        if(out.length>0){
+          const last=out[out.length-1];
+          last.qty=qty; last.unitPrice=unitPrice; last.price=unitPrice;
+          last.finalPrice=parseFloat((unitPrice*qty).toFixed(2));
+        }
+        continue;
+      }
+      const qtyM=trimmed.match(QTY_OPEN_RX); // "3 x (" multilínea
       if(qtyM){
         const qty=parseInt(qtyM[1]);
         // Leer precio unitario "1,29)"
@@ -410,9 +434,7 @@ function parseTicketText(text){
         // Parchear el último producto añadido
         if(out.length>0){
           const last=out[out.length-1];
-          last.qty=qty;
-          last.unitPrice=unitPrice;
-          last.price=unitPrice;
+          last.qty=qty; last.unitPrice=unitPrice; last.price=unitPrice;
           last.finalPrice=parseFloat((unitPrice*qty).toFixed(2));
         }
         continue;
