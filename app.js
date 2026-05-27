@@ -332,7 +332,7 @@ function parseTicketText(text){
   // ── Detectar tienda ───────────────────────────────────────────
   const STORES=['mercadona','lidl','aldi','carrefour','dia','eroski','alcampo','consum',
     'hipercor','el corte ingles','supercor','spar','froiz','ahorramas','bonarea','decathlon',
-    'primark','zara','mediamarkt','fnac','leroy','bricomart','ikea'];
+    'primark','zara','mediamarkt','fnac','leroy','bricomart','ikea','distribuciones froiz'];
   let store='';
   for(const l of lines.slice(0,6)){
     const low=l.toLowerCase();
@@ -345,6 +345,8 @@ function parseTicketText(text){
   // Carrefour: tiene bloques "N x (" en el texto
   const isCarrefour = store.toLowerCase().includes('carrefour') ||
     lines.some(l=>QTY_OPEN_RX.test(l));
+  const isFroiz = store.toLowerCase().includes('froiz') ||
+    lines.some(l=>/distribuciones froiz/i.test(l));
 
   // ── Detectar fecha y hora ─────────────────────────────────────
   let date=null, time=null;
@@ -382,11 +384,11 @@ function parseTicketText(text){
   // ── Detectar total global ─────────────────────────────────────
   let total=0;
   // Buscar IMPORTE: / TOTAL A PAGAR / ART. TOTAL / ==== seguido de precio
-  const TOTAL_TRIGGER_RX=/^(importe|total\s*a\s*pagar|art\.?\s*total|====)/i;
+  const TOTAL_TRIGGER_RX=/^(total\s*a\s*pagar|art\.?[\s.]*total|====+|\*?total\b)/i;
   for(let ti=0;ti<lines.length;ti++){
     const l=lines[ti].trim();
     // Precio inline en la misma línea: "IMPORTE: 11,82 EUR"
-    const inlineTotal=l.match(/(?:importe?|total|imp\.)[^0-9]*(\d{1,4}[.,]\d{2})\s*(?:eur|€)?/i);
+    const inlineTotal=l.match(/(?:importe?|\*?total|imp\.|entrega:)[^0-9]*(\d{1,4}[.,]\d{2})\s*(?:eur|€\.?)?/i);
     if(inlineTotal){ const v=parseFloat(inlineTotal[1].replace(',','.')); if(v>0){total=v;break;} }
     if(!TOTAL_TRIGGER_RX.test(l)) continue;
     // Buscar precio en las siguientes líneas no vacías
@@ -453,7 +455,9 @@ function parseTicketText(text){
   // ── PARSEAR PRODUCTOS ─────────────────────────────────────────
   const products=[];
 
-  if(isCarrefour){
+  if(isFroiz){
+    parseFroiz(lines, products); // Froiz usa todas las líneas, no solo productLines
+  } else if(isCarrefour){
     parseCarrefour(productLines, products);
   } else {
     parseGeneric(productLines, products);
@@ -461,6 +465,122 @@ function parseTicketText(text){
 
   total=parseFloat(String(total).replace(',','.'));
   return{store,date,time,last4,total,products,errors:[],warnings:[]};
+
+  // ══════════════════════════════════════════════════════════════════
+  //  FORMATO FROIZ
+  //  Estructura OCR: NOMBRE → CÓDIGO_INTERNO → PRECIO
+  //  La sección de IVA empieza con "IMPORTE" — todo lo que sigue son importes fiscales
+  //  Particularidades:
+  //  - "6 u" en el nombre es contenido del paquete, no cantidad comprada
+  //  - El tipo de IVA puede aparecer al final del nombre: "Mantequilla... 10%"
+  //  - Un número entero suelto antes del código puede ser qty del producto anterior (pack)
+  //  - Precio correcto = primer precio después del código interno
+  // ══════════════════════════════════════════════════════════════════
+  function parseFroiz(allLines, out){
+    const FROIZ_CODE_RX=/^\d{5,}\.?\s*\d*$/;
+    const FROIZ_CUT_RX=/^(\*?total\b|entrega:|tarjetas:|a\s+devolver|base\s+c\.iva)/i;
+
+    let headerEnd=0;
+    for(let i=0;i<allLines.length;i++){
+      const l=allLines[i].trim();
+      if(/^descripcion\b/i.test(l)){headerEnd=i+1;break;}
+      if(/^nif\b|^cif\b/i.test(l)) headerEnd=i+1;
+    }
+    let docEnd=allLines.length;
+    for(let i=headerEnd;i<allLines.length;i++){
+      if(FROIZ_CUT_RX.test(allLines[i].trim())){docEnd=i;break;}
+    }
+    const body=allLines.slice(headerEnd,docEnd);
+
+    function isFroizName(l){
+      if(!l||l.length<3) return false;
+      if(FROIZ_CODE_RX.test(l)) return false;
+      if(isPrice(l)||isLidlPrice(l)) return false;
+      if(/^\d+$/.test(l)) return false;
+      if(/^\d+%$/.test(l)) return false;
+      // IMPORTE es cabecera de columna en Froiz, no filtrar nombres después de él
+      if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l)) return false;
+      if(/^(nif|cif|factura|simplificada|descripcion|cant|p\.v\.p)/i.test(l)) return false;
+      return true;
+    }
+
+    const names=body.filter(l=>isFroizName(l.trim()));
+    const prices=[];
+    // Detectar si IMPORTE aparece antes o después de los nombres
+    const firstNameIdx=body.findIndex(l=>isFroizName(l.trim()));
+    const importeIdx=body.findIndex(l=>/^importe$/i.test(l.trim()));
+    const importeIsHeader=importeIdx>=0&&importeIdx<firstNameIdx; // IMPORTE antes de nombres → cabecera
+    // Para iPad: prices directamente tras código (antes de IMPORTE)
+    // Para iPhone: prices vienen en pares tras 4%: [pvp_unit, importe_total] — tomar el último
+    if(!importeIsHeader){
+      // iPad: tomar precios inmediatamente después de cada código interno
+      // No cortar en IMPORTE — puede haber productos después
+      let prevWasCode=false;
+      for(const l of body){
+        const t=l.trim();
+        if(FROIZ_CODE_RX.test(t)){prevWasCode=true;continue;} // check code BEFORE bare integer
+        if(/^\d+%$/.test(t)||/^\d+$/.test(t)){prevWasCode=false;continue;}
+        if((isPrice(t)||isLidlPrice(t))&&prevWasCode){
+          const p=parseLidlPrice(t)||parsePrice(t);
+          if(p!=null&&p>0&&p<500) prices.push(p);
+          prevWasCode=false; continue;
+        }
+        if(isPrice(t)||isLidlPrice(t)){prevWasCode=false;continue;} // precio no tras código → ignorar
+        prevWasCode=false;
+      }
+    } else {
+      // iPhone Froiz: precios vienen agrupados por tipo IVA
+      // Cada grupo de IVA puede tener 1 o 2 precios: [pvp_unit, total_pagado]
+      // Si hay 2 precios en el grupo, el segundo es el total (pack).
+      // Estructura: 4% → p1a, p1b → 4% → p2a, p2b → 10% → p3a, p3b
+      // O sin agrupación clara: contar cuántos nombres hay y tomar esa cantidad de precios
+      // en el orden correcto desde el bloque de precios.
+      // Estrategia: recoger TODOS los precios en orden y tomar 1 por nombre,
+      // eligiendo el total (2º si hay par consecutivo con mismo tipo, o el más grande)
+      const allPrices=[];
+      for(const l of body){
+        const t=l.trim();
+        if(/^\d+%$/.test(t)) continue; // separador de IVA
+        if(isPrice(t)||isLidlPrice(t)){
+          const p=parseLidlPrice(t)||parsePrice(t);
+          if(p!=null&&p>0&&p<500) allPrices.push(p);
+        }
+      }
+      // allPrices para el ejemplo: [1.89, 1.89, 1.19, 7.14, 3.69, 3.69]
+      // Necesitamos names.length precios, uno por nombre
+      // Patrón: cuando hay un precio duplicado consecutivo, usar uno. Cuando hay par diferente, usar el mayor.
+      const deduped=[];
+      let ai=0;
+      while(ai<allPrices.length&&deduped.length<names.length){
+        const current=allPrices[ai];
+        const next=allPrices[ai+1];
+        if(next!==undefined&&next!==current&&next>current){
+          // Par diferente: pvp_unit + total_pagado → tomar el total
+          deduped.push(next); ai+=2;
+        } else if(next!==undefined&&next===current){
+          // Precio duplicado: tomar una vez
+          deduped.push(current); ai+=2;
+        } else {
+          deduped.push(current); ai++;
+        }
+      }
+      deduped.forEach(p=>prices.push(p));
+    }
+
+    for(let k=0;k<names.length;k++){
+      const rawName=names[k].trim().replace(/\s+\d+[.,]?\d*\s*%\s*$/,'').trim();
+      const price=prices[k];
+      if(!price) continue;
+      const nm=cleanName(rawName)
+        .replace(/\s+\d+\s*u\b/gi,'')
+        .replace(/\s+\d+[.,]\d+\s*(kg|g|l|ml|cl)\b/gi,'')
+        .replace(/\s+\d+\s*(kg|g|l|ml|cl)\b/gi,'')
+        .replace(/\bbrik\s+\d+(\s+\d+)?\b/gi,'brik')
+        .replace(/\s+\d+\s*$/,'').trim();
+      if(nm.length<2) continue;
+      out.push(makeProduct(nm,rawName,price,1));
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════
   //  FORMATO CARREFOUR — estructura confirmada:
@@ -1729,12 +1849,12 @@ function showVisionStats(){
       </div>
       <div style="background:var(--bg3);border-radius:var(--rad-sm);padding:14px;display:flex;gap:14px">
         <div style="flex:1">
-          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Incluidas al mes</div>
-          <div style="font-size:20px;font-weight:800;color:var(--green)">1.000</div>
-        </div>
-        <div style="flex:1">
           <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Restantes est.</div>
           <div style="font-size:20px;font-weight:800;color:${freeLeft>0?'var(--green)':'var(--amber)'}">${freeLeft}</div>
+        </div>
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Gasto estimado</div>
+          <div style="font-size:20px;font-weight:800;color:${cost>0?'var(--amber)':'var(--txt1)'}">${cost.toFixed(2)}</div>
         </div>
       </div>
       <div style="background:var(--bg3);border-radius:var(--rad-sm);padding:12px">
@@ -1774,9 +1894,9 @@ function showGroqStats(){
     </div>`);
 }
 function copyLastOCR(){
-  const text=localStorage.getItem('lastOCR')||'';
-  if(!text){showToast('Sin OCR guardado todavía');return;}
-  navigator.clipboard.writeText(text).then(()=>showToast('OCR copiado')).catch(()=>showToast('No se pudo copiar'));
+  const text=localStorage.getItem('clarito_lastOCR');const raw=text?JSON.parse(text):'';
+  if(!raw){showToast('Sin OCR guardado todavía');return;}
+  navigator.clipboard.writeText(raw).then(()=>showToast('OCR copiado ✓')).catch(()=>showToast('Error al copiar'));
 }
 function consultVisionUsage(){
   if(!confirm('Esta acción hace una petición real a Google Cloud Vision para verificar el estado de la cuota.\n\nSolo necesitas pulsarlo si tienes dudas sobre el contador local.\n\nPulsa Cancelar si no es necesario ahora.')){return;}
