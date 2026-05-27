@@ -19,7 +19,7 @@ const PRESET_COLORS = [
   '#eab308', // amarillo
   '#14b8a6', // turquesa
   '#f43f5e', // coral
-  '#ffb3c6', // rosa bebé
+  '#e879b0', // rosa bebé
 ];
 
 let DB = {
@@ -314,6 +314,12 @@ function parseTicketText(text){
   function isPriceLine(l){return PRICE_ONLY_RX.test(l);}
   function isKgInfoLine(l){return KG_INFO_RX.test(l)&&!PRICE_ONLY_RX.test(l);}
 
+  // Encontrar la línea donde aparece TOTAL para filtrar después de ella
+  let totalLineIdx=lines.length;
+  for(let ti=0;ti<lines.length;ti++){
+    if(/^total/i.test(lines[ti].trim())){totalLineIdx=ti;break;}
+  }
+
   const products=[];
   let i=0;
   while(i<lines.length){
@@ -323,7 +329,8 @@ function parseTicketText(text){
     const trimmed=line.trim();
     if(trimmed.length<2) continue;
     if(SKIP_RX.test(trimmed)) continue;
-    if(trimmed.includes('%')) continue;
+    // % y / solo se filtran DESPUÉS de la línea de TOTAL
+    if(i>totalLineIdx&&(trimmed.includes('%'))) continue;
     // No saltar líneas de kg aquí — solo ignorarlas en la recolección de precios
 
     // Formato inline: NOMBRE    1,45
@@ -331,7 +338,7 @@ function parseTicketText(text){
     if(inlineM){
       const rawName=inlineM[1].trim();
       const price=parseFloat(inlineM[2].replace(',','.'));
-      if(price>0&&price<=500&&rawName.length>=2&&!/^\d+$/.test(rawName)&&!rawName.includes('%')&&!SKIP_RX.test(rawName)&&!isKgInfoLine(rawName)){
+      if(price>0&&price<=500&&rawName.length>=2&&!/^\d+$/.test(rawName)&&!SKIP_RX.test(rawName)&&!isKgInfoLine(rawName)){
         const qm=rawName.match(QTY_PREFIX_RX);
         const qty=qm?parseInt(qm[1]):1;
         const name=cleanProductName(qm?qm[2]:rawName);
@@ -341,14 +348,13 @@ function parseTicketText(text){
       continue;
     }
 
-    // Si es una línea de solo precio o info de kg, saltar (ya la recogerá el bloque de arriba)
+    // Si es una línea de solo precio o info de kg, saltar
     if(isPriceLine(trimmed)||isKgInfoLine(trimmed)) continue;
 
     // Línea de fecha/hora — saltar
     if(/^\d{1,2}\/\d{2}\/\d{2,4}/.test(trimmed)||/^\d{1,2}:\d{2}/.test(trimmed)) continue;
 
     // Formato Mercadona: nombre en una línea, precios/info en líneas siguientes
-    // Recoger todas las líneas siguientes que sean precio o info de kg, hasta la siguiente línea de producto
     const priceLines=[];
     let j=i;
     while(j<lines.length){
@@ -357,19 +363,17 @@ function parseTicketText(text){
         priceLines.push(parseFloat(next.replace(',','.')));
         j++;
       } else if(isKgInfoLine(next)){
-        j++; // saltar línea de info kg sin añadir precio
+        j++;
       } else {
-        break; // siguiente producto
+        break;
       }
     }
 
     if(priceLines.length>0){
-      i=j; // avanzar el cursor
-      // El precio total es el último (Mercadona siempre pone unit, luego total)
+      i=j;
       const price=priceLines[priceLines.length-1];
-
       const rawName=trimmed;
-      if(SKIP_RX.test(rawName)||rawName.includes('%')||rawName.length<2) continue;
+      if(SKIP_RX.test(rawName)||rawName.length<2) continue;
       const qm=rawName.match(QTY_PREFIX_RX);
       const qty=qm?parseInt(qm[1]):1;
       const unitPrice=qty>1?parseFloat((price/qty).toFixed(2)):price;
@@ -620,7 +624,7 @@ function renderHome(){
     <div class="balance-hero">
       <div class="balance-hero-label">Balance actual</div>
       ${bal.amount<0.01
-        ?`<div class="balance-hero-amount" style="color:var(--green)">Cuentas al dia</div>`
+        ?`<div class="balance-hero-amount" style="color:#4ade80">Cuentas al día</div>`
         :`<div class="balance-hero-amount" style="color:var(--amber)">${fmt(bal.amount)}</div>
           <div style="font-size:13px;color:var(--txt1);margin-top:4px">${personName(bal.owes)} debe a ${personName(bal.owes===DB.persons[0].id?DB.persons[1]?.id:DB.persons[0].id)}</div>`}
       <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,.08);padding-top:14px">
@@ -754,8 +758,8 @@ function renderTicketEditor(){
         <div class="card" style="margin:0 0 12px">
           <div class="field-row"><label class="field-label">Supermercado</label><input value="${t.store||''}" placeholder="Ej: Mercadona" oninput="currentTicket.store=this.value"/></div>
           <div style="display:flex;gap:8px;margin-top:10px">
-            <div style="flex:3"><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" style="font-size:13px;padding:8px 10px" onchange="currentTicket.date=this.value"/></div>
-            <div style="flex:2"><label class="field-label">Hora</label><input type="time" value="${t.time||''}" style="font-size:13px;padding:8px 10px" onchange="currentTicket.time=this.value"/></div>
+            <div style="flex:3"><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" style="font-size:15px;padding:8px 6px;min-width:0" onchange="currentTicket.date=this.value"/></div>
+            <div style="flex:2"><label class="field-label">Hora</label><input type="time" value="${t.time||''}" style="font-size:15px;padding:8px 6px;min-width:0" onchange="currentTicket.time=this.value"/></div>
           </div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Total</label><input type="number" value="${t.total||''}" placeholder="0.00" step="0.01" oninput="currentTicket.total=parseFloat(this.value)||0"/></div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Últimos 4 dígitos tarjeta</label><input value="${t.last4||''}" placeholder="4821" maxlength="4" oninput="currentTicket.last4=this.value" style="letter-spacing:3px;font-weight:600"/></div>
@@ -1353,11 +1357,16 @@ setTimeout(()=>{
   const style=document.createElement('style');
   style.textContent=`
     /* Bigger small text */
-    .field-label{font-size:13px!important;}
-    .ticket-date,.ticket-payer,.product-name-raw,.bar-amt{font-size:13px!important;}
-    .badge,.settings-value,.stat-label{font-size:12px!important;}
+    .field-label{font-size:14px!important;}
+    .ticket-date,.ticket-payer,.bar-amt{font-size:14px!important;}
+    .product-name-raw{font-size:12px!important;}
+    .badge,.settings-value{font-size:13px!important;}
+    .stat-label{font-size:12px!important;}
     .recent-label{font-size:14px!important;}
     .nav-btn span{font-size:11px!important;}
+    .ai-qa-q{font-size:15px!important;}
+    .settings-label{font-size:15px!important;}
+    #nav{padding-bottom:max(14px,env(safe-area-inset-bottom))!important;}
 
     @media(min-width:520px){
       body{display:flex;justify-content:center;align-items:flex-start;background:#050507;min-height:100vh;}
