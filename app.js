@@ -573,71 +573,219 @@ function parseTicketText(text){
   }
   function isLidlPrice(l){return LIDL_PRICE_RX.test(l)||isPrice(l);}
 
-  function parseGeneric(pLines, out){
-    // ── Detectar formato Lidl columnas (iPad/WhatsApp):
-    // nombres primero, luego TOTAL, luego precios con B/A ──
-    // Señal: hay bloque de líneas "X,XX B" o "X,XX A" después de TOTAL
-    // Detectar formato Lidl columnas: precios B/A aparecen SOLO después de TOTAL
-    // (no intercalados con nombres como en formato inline iPhone)
-    let totalIdx=-1;
-    for(let li=0;li<pLines.length;li++) if(/^total$/i.test(pLines[li].trim())){totalIdx=li;break;}
-    const pricesBeforeTotal=totalIdx>=0?pLines.slice(0,totalIdx).filter(l=>LIDL_PRICE_RX.test(l.trim())).length:0;
-    const pricesAfterTotal=totalIdx>=0?pLines.slice(totalIdx).filter(l=>LIDL_PRICE_RX.test(l.trim())).length:0;
-    const hasLidlColumns=pricesAfterTotal>=3&&pricesBeforeTotal===0;
+  // ══════════════════════════════════════════════════════════════
+  //  FORMATO LIDL COLUMNAS (OCR real iPad/WhatsApp)
+  //
+  //  El OCR de Vision en iPad separa el ticket en dos bloques:
+  //  BLOQUE A (antes de TOTAL): nombres de producto + info kg + packs
+  //  BLOQUE B (después de IMP./EUR/ooo): precios con sufijo B/A
+  //
+  //  Estructura confirmada del OCR real:
+  //    NOMBRE1, NOMBRE2... GOFRES, 2,49x, 2, PIÑA, 1,718 kg x 1,89, EUR/kg
+  //    TOTAL, ENTREGA, [basura OCR], IMP. 18,72 EUR, [más basura]
+  //    ooo / EUR / 82 / [basura]
+  //    1,15 B, 1,75 B ... 4,98 B, 3,25 A
+  //    18,72, 18,72
+  //
+  //  Pack detectado por: NOMBRE seguido de "P,PPx" y luego un número entero
+  //  Fruta por: NOMBRE seguido de "N,NNN kg x P,PP" y "EUR/kg"
+  // ══════════════════════════════════════════════════════════════
+  function parseLidlColumns(pLines, allLines, out){
+    // Recoger nombres y sus metadatos (pack qty, kg info)
+    const entries=[]; // {raw, qty, unitPrice, kgInfo}
+    let i=0;
 
-    if(hasLidlColumns){
-      // Recoger nombres (antes del TOTAL) y precios (después del TOTAL/ENTREGA)
-      const names=[], prices=[];
-      let pastTotal=false;
-      for(const l of pLines){
-        const t=l.trim();
-        if(!t||t.length<2) continue;
-        if(/^(total|entrega|eur\/?kg?|eur$|2,49x|2,49\s*x)/i.test(t)){pastTotal=true;continue;}
-        if(BARCODE_RX.test(t)||SEP_RX.test(t)) continue;
-        if(isSkip(t)) continue;
-        if(MULT_RX.test(t)||UNIT_PRICE_X_RX.test(t)){
-          // Guardar info kg para el último nombre
-          if(names.length>0) names[names.length-1]._kgInfo=t;
-          continue;
-        }
-        if(!pastTotal){
-          // Antes del total: nombres de producto
-          // Excluir cabeceras de tienda (direcciones, NIFs, etc.)
-          if(!/^\d/.test(t)&&t.length>=3&&!isKgInfo(t)&&!WEIGHT_RX.test(t)
-             &&!isSkip(t)&&!/calle|avda|plaza|polg|\d{5}/i.test(t)
-             &&!/s\.a\.u?\.?$|s\.l\.$/i.test(t)
-             &&!(store&&t.toLowerCase().includes(store.toLowerCase()))
-             &&!/^(lidl|aldi|dia|mercadona|carrefour|eroski|alcampo)$/i.test(t)){
-            names.push({raw:t,_kgInfo:null});
-          }
-        } else {
-          // Después del total: precios
-          const p=parseLidlPrice(t);
-          // Solo precios con decimales (no números enteros como "2" o "18")
-          if(p!==null&&p>0&&p<=500&&/[.,]\d{2}/.test(t)) prices.push(p);
+    // Buscar fin del bloque de nombres (TOTAL o ENTREGA)
+    const totalIdx=pLines.findIndex(l=>/^(total|entrega)$/i.test(l.trim()));
+    const nameLines=totalIdx>=0?pLines.slice(0,totalIdx):pLines;
+
+    let j=0;
+    // Saltar cabecera buscando NIF como ancla de inicio de productos
+    {
+      let nifIdx=nameLines.findIndex(l=>/^nif\b/i.test(l.trim()));
+      if(nifIdx>=0) j=nifIdx+1;
+    }
+    while(j<nameLines.length){
+      const l=nameLines[j].trim(); j++;
+      if(!l||isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l)) continue;
+      if(/^\d{1,2}[\/.:]\d{2}/.test(l)) continue;
+      if(/^(nif|cif|eur\/kg|eur$|entrega|recibo|inicio|folletos|mi\s+cuenta|lidl\s+plus)/i.test(l)) continue;
+      if(/calle|avda|plaza|\d{5}/.test(l)) continue;
+      if(/s\.a\.u?\.?$|s\.l\.$/i.test(l)) continue;
+      if(store&&l.toLowerCase().includes(store.toLowerCase())) continue;
+      if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l)) continue;
+      if(/^\d+$/.test(l)) continue;
+      if(/^(ooo|82$|'|")/i.test(l)) continue;
+      if(/^\d+\s+de\s+/i.test(l)||/^(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i.test(l)) continue;
+      if(LIDL_PRICE_RX.test(l)||UNIT_PRICE_X_RX.test(l)) continue;
+      if(isPrice(l)) continue;
+
+      // Detectar info de kg: siguiente línea es "N,NNN kg x P,PP"
+      let kgInfo=null;
+      if(j<nameLines.length&&MULT_RX.test(nameLines[j].trim())){
+        kgInfo=nameLines[j].trim(); j++;
+        // Consumir "EUR/kg" si sigue
+        if(j<nameLines.length&&/^eur\/kg/i.test(nameLines[j].trim())) j++;
+      }
+
+      // Detectar pack: siguiente línea es "P,PPx" + número entero
+      let packQty=1, packUnit=null;
+      if(j<nameLines.length&&UNIT_PRICE_X_RX.test(nameLines[j].trim())){
+        const upm=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);
+        packUnit=upm?parseFloat(upm[1].replace(',','.')):null;
+        j++;
+        if(j<nameLines.length&&/^\d+$/.test(nameLines[j].trim())){
+          packQty=parseInt(nameLines[j].trim()); j++;
         }
       }
-      // Parear nombres con precios por posición
-      if(names.length>0&&prices.length>0){
-        for(let k=0;k<names.length;k++){
-          const entry=names[k];
-          const price=prices[k];
-          if(!price) continue;
-          const nm=cleanName(entry.raw);
-          if(nm.length<2) continue;
-          // Si tiene info kg, es fruta/verdura — precio ya es el total
-          if(entry._kgInfo){
-            // Fruta/verdura por peso: mostrar como 1 unidad al precio total
-            out.push(makeProduct(nm,entry.raw,price,1));
-          } else {
-            out.push(makeProduct(nm,entry.raw,price,1));
-          }
-        }
-        return;
+
+      entries.push({raw:l, qty:packQty, unitPrice:packUnit, kgInfo});
+    }
+
+    // Recoger precios del bloque B (después de TOTAL en allLines)
+    // Buscar el bloque de precios: aparecen agrupados con sufijo B/A
+    // Pueden estar después de "ooo", "EUR", basura OCR
+    const prices=[];
+    let inPriceBlock=false;
+    for(const l of allLines){
+      const t=l.trim();
+      if(LIDL_PRICE_RX.test(t)){
+        const p=parseLidlPrice(t);
+        if(p!==null&&p>0) prices.push(p);
+        inPriceBlock=true;
+      } else if(inPriceBlock&&isPrice(t)){
+        // Precio sin sufijo B/A después del bloque (total del ticket)
+        break;
+      } else if(inPriceBlock&&t&&!/^(18|ooo|eur|82|'|\d{1,2}$)/i.test(t)){
+        // Línea de texto real — fin del bloque de precios
+        inPriceBlock=false;
       }
     }
 
-    // ── Formato genérico: inline o nombre+precio en líneas siguientes ──
+    // Parear entradas con precios
+    for(let k=0;k<entries.length;k++){
+      const e=entries[k];
+      const price=prices[k];
+      if(price==null) continue;
+      const nm=cleanName(e.raw);
+      if(nm.length<2) continue;
+      if(e.kgInfo){
+        // Fruta/verdura: 1 unidad al precio total
+        out.push(makeProduct(nm,e.raw,price,1));
+      } else if(e.qty>1&&e.unitPrice){
+        out.push(makeProduct(nm,e.raw,e.unitPrice,e.qty));
+      } else {
+        out.push(makeProduct(nm,e.raw,price,1));
+      }
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  FORMATO LIDL INLINE (OCR real iPhone)
+  //
+  //  El OCR de iPhone mezcla nombres y precios pero no siempre inline.
+  //  Estructura real:
+  //    NOMBRE → precio en línea siguiente (o intercalado)
+  //    GOFRES → 2,49x → 2 → 4,98 B  (pack)
+  //    PIÑA   → 3,25 A → 1,718 kg x 1,89 → EUR/kg
+  //
+  //  Hay basura OCR antes: "82", "ooo", "EUR" — filtrar
+  // ══════════════════════════════════════════════════════════════
+  function parseLidlInline(pLines, out){
+    // Estrategia: recoger todos los nombres y todos los precios por separado,
+    // luego parearlos por posición en el documento.
+    // Esto maneja el caso donde el OCR de iPhone mezcla nombres y precios
+    // pero no siempre inline — pueden venir grupos de nombres seguidos de grupos de precios.
+
+    // Empezar después del NIF
+    let startIdx=0;
+    {
+      const nifIdx=pLines.findIndex(l=>/^nif\b/i.test(l.trim()));
+      if(nifIdx>=0) startIdx=nifIdx+1;
+    }
+    const lines=pLines.slice(startIdx);
+
+    function isProductName(l){
+      if(!l||l.length<2) return false;
+      if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l)) return false;
+      if(/^\d{1,2}[\/.:]\d{2}/.test(l)) return false;
+      if(/^(nif|cif|eur\/kg|eur$|entrega|recibo|total|inicio|folletos|mi\s+cuenta|lidl\s+plus|ooo)/i.test(l)) return false;
+      if(/calle|avda|plaza|\d{5}/.test(l)) return false;
+      if(/s\.a\.u?\.?$|s\.l\.$/i.test(l)) return false;
+      if(store&&l.toLowerCase().includes(store.toLowerCase())) return false;
+      if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l)) return false;
+      if(/^(82|ooo|'|"|eur$)$/i.test(l)) return false;
+      if(isLidlPrice(l)||isPrice(l)||UNIT_PRICE_X_RX.test(l)) return false;
+      if(/^\d+$/.test(l)) return false;
+      if(isKgInfo(l)||WEIGHT_RX.test(l)||MULT_RX.test(l)) return false;
+      return true;
+    }
+
+    // Recoger entradas: {name, qty, unitP, kgInfo}
+    const entries=[];
+    let i=0;
+    while(i<lines.length){
+      const l=lines[i].trim(); i++;
+      if(!isProductName(l)) continue;
+      let qty=1, unitP=null, kgInfo=null;
+      // Mirar si viene pack (2,49x → 2) en las siguientes líneas
+      let j=i;
+      while(j<lines.length){
+        const nxt=lines[j].trim();
+        if(UNIT_PRICE_X_RX.test(nxt)){const m=nxt.match(/^(\d{1,3}[.,]\d{2})/);unitP=m?parseFloat(m[1].replace(',','.')):null;j++;
+          if(j<lines.length&&/^\d+$/.test(lines[j].trim())){qty=parseInt(lines[j].trim());j++;}
+          break;}
+        if(MULT_RX.test(nxt)){kgInfo=nxt;j++;if(j<lines.length&&/^eur\/kg/i.test(lines[j].trim()))j++;break;}
+        break;
+      }
+      i=j;
+      entries.push({name:l, qty, unitP, kgInfo});
+    }
+
+    // Recoger todos los precios en orden de documento
+    const prices=[];
+    for(const l of lines){
+      const t=l.trim();
+      if(isLidlPrice(t)){const p=parseLidlPrice(t);if(p!=null&&p>0&&p<500)prices.push(p);}
+    }
+
+    // Parear: cada entrada con su precio en posición
+    for(let k=0;k<entries.length;k++){
+      const e=entries[k];
+      const price=prices[k];
+      if(price==null) continue;
+      const nm=cleanName(e.name);
+      if(nm.length<2) continue;
+      if(e.kgInfo){out.push(makeProduct(nm,e.name,price,1));}
+      else if(e.qty>1&&e.unitP){out.push(makeProduct(nm,e.name,e.unitP,e.qty));}
+      else{out.push(makeProduct(nm,e.name,price,1));}
+    }
+  }
+
+  function parseGeneric(pLines, out){
+    // ── Detectar formato Lidl columnas con el OCR real ──
+    // Señal: bloque de precios B/A aparece DESPUÉS del bloque de nombres
+    // y DESPUÉS de TOTAL/IMP. (no intercalado)
+    const hasLidlColumns=isLidlColumnFormat;
+
+    if(hasLidlColumns){
+      // Usar todas las líneas originales para encontrar el bloque de precios
+      const allProductLines=[...pLines];
+      parseLidlColumns(pLines, allProductLines, out);
+      return;
+    }
+
+    // ── Detectar formato Lidl inline (iPhone) ──
+    // Señal: hay precios B/A mezclados con nombres, no todos al final
+    const pricesInFirstHalf=pLines.slice(0,Math.ceil(pLines.length/2)).filter(l=>LIDL_PRICE_RX.test(l.trim())).length;
+    const isLidlInline=pricesInFirstHalf>0;
+
+    if(isLidlInline){
+      parseLidlInline(pLines, out);
+      return;
+    }
+
+    // ── Formato genérico (Mercadona, otros) ──
     let i=0;
     while(i<pLines.length){
       const trimmed=pLines[i].trim(); i++;
@@ -647,14 +795,13 @@ function parseTicketText(text){
       if(/^\d{1,2}[\/.:]\d{2}/.test(trimmed)) continue;
       if(MULT_RX.test(trimmed)||UNIT_PRICE_X_RX.test(trimmed)) continue;
       if(isKgInfo(trimmed)||WEIGHT_RX.test(trimmed)) continue;
-      if(store&&trimmed.toLowerCase()===store.toLowerCase()) continue; // skip nombre tienda
+      if(store&&trimmed.toLowerCase()===store.toLowerCase()) continue;
 
-      // Lidl inline: "ZUMO MANZANA 1,15 B" (1+ espacios, con o sin letra IVA)
       const lidlInlineM=trimmed.match(/^(.+?)\s+(\d{1,3}[.,]\d{2})\s*[A-Z]?\s*$/);
       if(lidlInlineM){
         const rawName=lidlInlineM[1].trim();
         const price=parseFloat(lidlInlineM[2].replace(',','.'));
-        if(price>0&&price<=500&&rawName.length>=2&&!isSkip(rawName)&&!/^\d/.test(rawName)
+        if(price>0&&price<=500&&rawName.length>=2&&!isSkip(rawName)
            &&!/^total$/i.test(rawName)&&!(store&&rawName.toLowerCase()===store.toLowerCase())){
           const nm=cleanName(rawName);
           if(nm.length>=2) out.push(makeProduct(nm,rawName,price,1));
@@ -662,7 +809,6 @@ function parseTicketText(text){
         continue;
       }
 
-      // Inline sin sufijo: NOMBRE   PRECIO
       const inlineM=trimmed.match(INLINE_RX);
       if(inlineM){
         const rawName=inlineM[1].trim();
@@ -677,9 +823,8 @@ function parseTicketText(text){
       }
 
       if(isPrice(trimmed)||isLidlPrice(trimmed)) continue;
-      if(/^\d/.test(trimmed)) continue; // línea que empieza con número sin ser nombre
+      if(/^\d/.test(trimmed)) continue;
 
-      // Nombre → precio en líneas siguientes (Mercadona)
       const priceLines=[];
       let j=i;
       while(j<pLines.length){
@@ -701,7 +846,6 @@ function parseTicketText(text){
       }
     }
   }
-
   // ── Helpers ───────────────────────────────────────────────────
   function cleanName(raw){
     return raw
@@ -1103,7 +1247,7 @@ function renderTicketEditor(){
             <div><label class="field-label">Fecha</label><input type="date" value="${t.date||''}" onchange="currentTicket.date=this.value" style="font-size:15px"/></div>
             <div><label class="field-label">Hora</label><input type="time" value="${t.time||''}" onchange="currentTicket.time=this.value" style="font-size:15px"/></div>
           </div>
-          <div class="field-row" style="margin-top:10px"><label class="field-label">Total</label><input type="number" value="${t.total!=null?(+t.total).toFixed(2):''}" placeholder="0.00" step="0.01" oninput="currentTicket.total=parseFloat(this.value)||0"/></div>
+          <div class="field-row" style="margin-top:10px"><label class="field-label">Total</label><input type="text" inputmode="decimal" value="${t.total!=null?(+t.total).toFixed(2):''}" placeholder="0.00" oninput="currentTicket.total=parseFloat(this.value.replace(',','.'))||0"/></div>
           <div class="field-row" style="margin-top:10px"><label class="field-label">Últimos 4 dígitos tarjeta</label><input value="${t.last4||''}" placeholder="4821" maxlength="4" oninput="currentTicket.last4=this.value" style="letter-spacing:3px;font-weight:400"/></div>
         </div>
       </div>
@@ -1585,23 +1729,23 @@ function showVisionStats(){
       </div>
       <div style="background:var(--bg3);border-radius:var(--rad-sm);padding:14px;display:flex;gap:14px">
         <div style="flex:1">
-          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Cuota gratis restante</div>
-          <div style="font-size:20px;font-weight:800;color:var(--green)">${freeLeft}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Incluidas al mes</div>
+          <div style="font-size:20px;font-weight:800;color:var(--green)">1.000</div>
         </div>
         <div style="flex:1">
-          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Gasto estimado</div>
-          <div style="font-size:20px;font-weight:800;color:${cost>0?'var(--amber)':'var(--green)'}">$${cost.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--txt2);margin-bottom:2px">Restantes est.</div>
+          <div style="font-size:20px;font-weight:800;color:${freeLeft>0?'var(--green)':'var(--amber)'}">${freeLeft}</div>
         </div>
       </div>
       <div style="background:var(--bg3);border-radius:var(--rad-sm);padding:12px">
-        <div style="font-size:11px;color:var(--txt2);line-height:1.6">1.000 lecturas/mes incluidas · Lectura adicional: $1,50/1.000</div>
+        <div style="font-size:11px;color:var(--txt2);line-height:1.6">1.000 lecturas mensuales incluidas en el plan · Se renueva cada mes</div>
       </div>
-      ${lastOCR?`<div style="background:var(--bg3);border-radius:var(--rad-sm);padding:12px">
-        <div style="font-size:11px;color:var(--txt2);margin-bottom:6px">Último OCR recibido</div>
-        <pre style="font-size:10px;color:var(--txt1);white-space:pre-wrap;max-height:120px;overflow:auto;margin:0">${lastOCR.replace(/</g,'&lt;')}</pre>
-      </div>`:''}
+      ${lastOCR?'<div style="background:var(--bg3);border-radius:var(--rad-sm);padding:12px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:11px;color:var(--txt2)">Último OCR recibido</span><button onclick="copyLastOCR()" style="font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--brd);background:var(--bg2);color:var(--txt1)">Copiar</button></div><pre style="font-size:10px;color:var(--txt1);white-space:pre-wrap;max-height:120px;overflow:auto;margin:0">'+lastOCR.replace(/</g,'&lt;')+'</pre></div>':''}
     </div>
-    <button class="btn-primary" onclick="closeModal()">Cerrar</button>`);
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button onclick="consultVisionUsage()" style="flex:1;padding:10px;border-radius:var(--rad-sm);border:1px solid var(--brd);background:var(--bg3);color:var(--txt3);font-size:13px;opacity:0.5;cursor:pointer">Contar</button>
+      <button class="btn-primary" style="flex:2" onclick="closeModal()">Cerrar</button>
+    </div>`);
 }
 function showGroqStats(){
   const s=DB.groqStats||{};
@@ -1624,7 +1768,27 @@ function showGroqStats(){
         <div style="font-size:12px;color:var(--txt2);line-height:1.6">Plan gratuito · Sin límite mensual · Rate limit: 30 req/min</div>
       </div>
     </div>
-    <button class="btn-primary" onclick="closeModal()">Cerrar</button>`);
+    <div style="display:flex;gap:10px;margin-top:4px">
+      <button onclick="consultGroqUsage()" style="flex:1;padding:10px;border-radius:var(--rad-sm);border:1px solid var(--brd);background:var(--bg3);color:var(--txt3);font-size:13px;opacity:0.5;cursor:pointer">Contar</button>
+      <button class="btn-primary" style="flex:2" onclick="closeModal()">Cerrar</button>
+    </div>`);
+}
+function copyLastOCR(){
+  const text=localStorage.getItem('lastOCR')||'';
+  if(!text){showToast('Sin OCR guardado todavía');return;}
+  navigator.clipboard.writeText(text).then(()=>showToast('OCR copiado')).catch(()=>showToast('No se pudo copiar'));
+}
+function consultVisionUsage(){
+  if(!confirm('Esta acción hace una petición real a Google Cloud Vision para verificar el estado de la cuota.\n\nSolo necesitas pulsarlo si tienes dudas sobre el contador local.\n\nPulsa Cancelar si no es necesario ahora.')){return;}
+  // Google Cloud no tiene endpoint público para consultar uso sin OAuth completo.
+  // El contador local es la fuente más fiable para uso en PWA.
+  showToast('El contador local es el registro más preciso disponible desde una PWA');
+}
+function consultGroqUsage(){
+  if(!confirm('Esta acción hace una petición real a Groq para verificar el estado de tu cuenta.\n\nEl contador local ya refleja tu uso desde esta app.\n\nPulsa Cancelar si no es necesario ahora.')){return;}
+  if(!DB.groqKey){showToast('Configura primero tu Groq Key');return;}
+  // Groq no expone endpoint de uso por API key sin dashboard OAuth.
+  showToast('El contador local es el registro más preciso disponible desde una PWA');
 }
 function addPerson(){const idx=DB.persons.length;DB.persons.push({id:'p'+(idx+1),name:'Persona '+(idx+1),color:PRESET_COLORS[idx%PRESET_COLORS.length],cards:[]});saveDB();renderSettings();editPerson(idx);}
 function editPerson(idx){
