@@ -30,6 +30,7 @@ let DB = {
   visionKey:'',
   groqKey:'',
   groqStats:{calls:0,firstCall:null,tokensUsed:0},
+  devMode:false,
   visionStats:{calls:0,firstCall:null},
   persons:[
     {id:'p1',name:'Persona 1',color:'#7c6ef5',cards:[]},
@@ -48,6 +49,7 @@ function loadDB(){
   DB.groqKey=S.get('groqKey')||DB.groqKey||'';
   try{const gs=S.get('groqStats');if(gs)DB.groqStats=JSON.parse(gs);}catch{}
   try{const vs=S.get('visionStats');if(vs)DB.visionStats=JSON.parse(vs);}catch{}
+  DB.devMode=S.get('devMode')||false;
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.aiQuestions) DB.aiQuestions=[];
   if(!DB.aiConvMessages) DB.aiConvMessages=[];
@@ -590,6 +592,172 @@ function parseTicketText(text){
   }
 
   // ══════════════════════════════════════════════════════════════
+  //  FORMATO CARREFOUR
+  //  Dos sub-formatos:
+  //  A) NOMBRE → CÓDIGO_ALFANUM → PRECIO (con descuentos negativos)
+  //  B) NOMBRE → N x ( → PRECIO_UNIT ) → TOTAL (packs)
+  //  El nombre viene ANTES del bloque qty.
+  //  Descuentos: líneas con precio negativo (-5,22) → añadir como descuento al último producto
+  // ══════════════════════════════════════════════════════════════
+  function parseCarrefour(pLines, out){
+    const ALFA_CODE_RX=/^[A-Z0-9]{2,6}$/;  // "EV45", "4N21", "CZ67"
+    const NEG_PRICE_RX=/^-(\d{1,3}[.,]\d{2})$/; // "-5,22"
+    const DISCOUNT_NAME_RX=/^(descuento|dto\.?|oferta|3x2|2x1|1\s+3x2)/i;
+    function fp(t){return parseFloat(t.replace(/[)€]/g,'').replace(',','.').trim());}
+
+    let i=0;
+    while(i<pLines.length){
+      const l=pLines[i].trim(); i++;
+      if(!l||l.length<2) continue;
+      if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l)) continue;
+      if(/^\d{1,2}[\/.:]\d{2}/.test(l)) continue;
+      if(/^\d{1,3}$/.test(l)) continue; // número suelto de artículos
+
+      // Descuento negativo suelto → aplicar al último producto
+      const negM=l.match(NEG_PRICE_RX);
+      if(negM){
+        const disc=parseFloat(negM[1].replace(',','.'));
+        if(out.length>0){
+          const last=out[out.length-1];
+          last.discount=(last.discount||0)+disc;
+          last.finalPrice=parseFloat(Math.max(0,last.finalPrice-disc).toFixed(2));
+        }
+        continue;
+      }
+
+      // Línea de descuento con nombre (DESCUENTO EN 2ª UNIDAD → saltar)
+      if(DISCOUNT_NAME_RX.test(l)) continue;
+
+      // Bloque qty inline: "3 x ( 2,85 )" o multilínea "3 x (\n2,85 )"
+      const qtyInlineM=l.match(QTY_INLINE_RX);
+      if(qtyInlineM){
+        const unitPrice=parseFloat(qtyInlineM[2].replace(',','.'));
+        let qty=parseInt(qtyInlineM[1])||1;
+        // Consumir precio total si sigue
+        if(i<pLines.length&&isPrice(pLines[i].trim())){
+          const tot=fp(pLines[i].trim());
+          const inferred=Math.round(tot/unitPrice);
+          if(inferred>=1&&inferred<=20&&Math.abs(inferred*unitPrice-tot)<0.02) qty=inferred;
+          i++;
+        }
+        if(out.length>0){
+          const last=out[out.length-1];
+          last.qty=qty; last.unitPrice=unitPrice; last.price=unitPrice;
+          last.finalPrice=parseFloat((unitPrice*qty).toFixed(2));
+        }
+        continue;
+      }
+
+      // Bloque qty multilínea "N x (" → nombre ya está en out
+      const qtyOpenM=l.match(QTY_OPEN_RX);
+      if(qtyOpenM){
+        const qty=parseInt(qtyOpenM[1]);
+        let unitPrice=null;
+        if(i<pLines.length&&isPrice(pLines[i].trim())){unitPrice=fp(pLines[i].trim());i++;}
+        if(i<pLines.length&&isPrice(pLines[i].trim())) i++; // consumir total
+        if(!unitPrice) continue;
+        if(out.length>0){
+          const last=out[out.length-1];
+          last.qty=qty; last.unitPrice=unitPrice; last.price=unitPrice;
+          last.finalPrice=parseFloat((unitPrice*qty).toFixed(2));
+        }
+        continue;
+      }
+
+      // Precio suelto → asigna al último sin precio o precio total
+      if(isPrice(l)){
+        const pr=fp(l);
+        if(out.length>0){
+          for(let k=out.length-1;k>=Math.max(0,out.length-4);k--){
+            if(!out[k].unitPrice||out[k].unitPrice===0){
+              if(/art.*total|total.*pagar/i.test(out[k].rawName||'')){out.splice(k,1);break;}
+              out[k].unitPrice=pr; out[k].price=pr;
+              out[k].finalPrice=parseFloat((pr*(out[k].qty||1)).toFixed(2));
+              break;
+            }
+          }
+        }
+        continue;
+      }
+
+      // Código alfanumérico interno (EV45, 4N21…) → saltar
+      if(ALFA_CODE_RX.test(l)) continue;
+
+      // Nombre de producto → añadir con precio 0
+      if(!isKgInfo(l)&&!WEIGHT_RX.test(l)){
+        const nm=cleanName(l);
+        if(nm.length>=2) out.push(makeProduct(nm,l,0,1));
+      }
+    }
+    // Limpiar productos sin precio
+    for(let k=out.length-1;k>=0;k--){
+      if(!out[k].unitPrice||out[k].unitPrice===0) out.splice(k,1);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  LIDL COLUMNAS (iPad: precios después del TOTAL)
+  // ══════════════════════════════════════════════════════════════
+  function parseLidlColumns(pLines, allLines, out){
+    // Encontrar NIF como ancla
+    let startNIF=0;
+    const nifIdx=pLines.findIndex(l=>/^nif\b/i.test(l.trim()));
+    if(nifIdx>=0) startNIF=nifIdx+1;
+
+    // Encontrar TOTAL
+    let totalIdx=pLines.findIndex(l=>/^total$/i.test(l.trim()));
+    if(totalIdx<0) totalIdx=pLines.length;
+
+    const nameLines=pLines.slice(startNIF,totalIdx);
+    const afterTotal=pLines.slice(totalIdx);
+
+    // Nombres
+    const entries=[];
+    let j=0;
+    while(j<nameLines.length){
+      const l=nameLines[j].trim(); j++;
+      if(!l||isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l)) continue;
+      if(/^\d/.test(l)) continue;
+      if(/^(ooo|eur$|'|")/i.test(l)) continue;
+      if(/calle|avda|plaza|\d{5}/.test(l)) continue;
+      if(/s\.a\.u?\.?$|s\.l\.$/i.test(l)) continue;
+      if(store&&l.toLowerCase().includes(store.toLowerCase())) continue;
+      if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l)) continue;
+      if(/^(\d+\s*u\b|eur\/kg)/i.test(l)) continue;
+      if(LIDL_PRICE_RX.test(l)||UNIT_PRICE_X_RX.test(l)||isPrice(l)) continue;
+
+      let kgInfo=null, packUnit=null, packQty=1;
+      if(j<nameLines.length&&MULT_RX.test(nameLines[j].trim())){kgInfo=nameLines[j].trim();j++;
+        if(j<nameLines.length&&/^eur\/kg/i.test(nameLines[j].trim())) j++;}
+      if(j<nameLines.length&&UNIT_PRICE_X_RX.test(nameLines[j].trim())){
+        const m=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);
+        packUnit=m?parseFloat(m[1].replace(',','.')):null; j++;
+        if(j<nameLines.length&&/^\d+$/.test(nameLines[j].trim())){packQty=parseInt(nameLines[j].trim());j++;}
+      }
+      entries.push({raw:l, qty:packQty, unitPrice:packUnit, kgInfo});
+    }
+
+    // Precios: bloque B/A después del TOTAL
+    const prices=[];
+    let inPriceBlock=false;
+    for(const l of afterTotal){
+      const t=l.trim();
+      if(LIDL_PRICE_RX.test(t)){const p=parseLidlPrice(t);if(p!=null&&p>0)prices.push(p);inPriceBlock=true;}
+      else if(inPriceBlock&&isPrice(t)) break;
+    }
+
+    for(let k=0;k<entries.length;k++){
+      const e=entries[k]; const price=prices[k];
+      if(price==null) continue;
+      const nm=cleanName(e.raw);
+      if(nm.length<2) continue;
+      if(e.kgInfo) out.push(makeProduct(nm,e.raw,price,1));
+      else if(e.qty>1&&e.unitPrice) out.push(makeProduct(nm,e.raw,e.unitPrice,e.qty));
+      else out.push(makeProduct(nm,e.raw,price,1));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
   //  FORMATO LIDL INLINE (OCR real iPhone)
   //
   //  El OCR de iPhone mezcla nombres y precios pero no siempre inline.
@@ -1012,7 +1180,7 @@ function renderHome(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header">
       <div style="display:flex;align-items:flex-end;gap:12px">
-        <img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)" onerror="this.style.display='none'"/>
+        <img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)" onclick="onLogoTap()" onerror="this.style.display='none'"/>
         <h1 style="padding-bottom:2px">Clarito</h1>
       </div>
     </div>
@@ -1534,7 +1702,7 @@ function getPredictions(){
 // ── SETTINGS ───────────────────────────────────────────────────
 function renderSettings(){
   document.getElementById('view').innerHTML=`
-    <div class="screen-header"><div style="display:flex;align-items:flex-end;gap:12px"><img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)" onerror="this.style.display='none'"/><h1 style="padding-bottom:2px">Configuración</h1></div></div>
+    <div class="screen-header"><div style="display:flex;align-items:flex-end;gap:12px"><img src="icon.png" style="width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)" onclick="onLogoTap()" onerror="this.style.display='none'"/><h1 style="padding-bottom:2px">Configuración</h1></div></div>
     <div style="height:8px"></div>
     <div class="settings-section">
       <div class="settings-section-title">Personas (${DB.persons.length})</div>
@@ -1543,8 +1711,8 @@ function renderSettings(){
         <div class="settings-row" onclick="addPerson()"><div class="settings-icon" style="background:var(--bg4)"><svg viewBox="0 0 24 24" fill="none" stroke="var(--txt1)" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div><div class="settings-label" style="color:var(--accent)">Añadir persona</div></div>
       </div>
     </div>
-    <div class="settings-section">
-      <div class="settings-section-title">APIs</div>
+    ${DB.devMode?`<div class="settings-section">
+      <div class="settings-section-title">APIs 🛠</div>
       <div style="background:var(--bg1)">
         <div class="settings-row" onclick="editVisionKey()"><div class="settings-icon" style="background:#1a3a2a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3M7 12h3M7 16h3M14 8h3M14 12h3M14 16h3"/></svg></div><div class="settings-label">Google Vision Key</div><div class="settings-value">${DB.visionKey?'•••'+DB.visionKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
         ${DB.visionKey?('<div class="settings-row" onclick="showVisionStats()" style="cursor:pointer"><div class="settings-icon" style="background:#0a2a1a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg></div><div class="settings-label">Uso de Vision</div><div class="settings-value">'+(DB.visionStats?.calls||0)+' lecturas</div><div class="settings-arrow">›</div></div>'):''}
@@ -1552,7 +1720,8 @@ function renderSettings(){
         ${DB.groqKey?('<div class="settings-row" onclick="showGroqStats()" style="cursor:pointer"><div class="settings-icon" style="background:#1a2a3a"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><polyline points=\'22 12 18 12 15 21 9 3 6 12 2 12\'/></svg></div><div class="settings-label">Uso de Groq</div><div class="settings-value">'+(DB.groqStats?.calls||0)+' llamadas · '+Math.round((DB.groqStats?.tokensUsed||0)/1000)+' k tokens</div><div class="settings-arrow">›</div></div>'):''}
       </div>
     </div>
-    <div class="settings-section">
+    `:''}
+    ${DB.devMode?`<div class="settings-section">
       <div class="settings-section-title">Tarjetas conocidas</div>
       <div style="background:var(--bg1)">
         ${Object.keys(DB.knowledge.cards).length===0
@@ -1560,8 +1729,9 @@ function renderSettings(){
           :Object.entries(DB.knowledge.cards).map(([l4,pid])=>`<div class="settings-row"><div class="settings-icon" style="background:#1e3a5f"><svg viewBox="0 0 24 24" fill="none"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div><div class="settings-label">•••• ${l4}</div><div class="settings-value" style="color:${personColor(pid)};font-weight:600">${personName(pid)}</div><button onclick="forgetCard('${l4}')" style="color:var(--red);font-size:20px">×</button></div>`).join('')}
       </div>
     </div>
-    <div class="settings-section">
-      <div class="settings-section-title">Datos</div>
+    `:''}
+    ${DB.devMode?`<div class="settings-section">
+      <div class="settings-section-title">Datos 🛠</div>
       <div style="background:var(--bg1)">
         <div class="settings-row" onclick="editKnowledgeProducts()"><div class="settings-label">Productos aprendidos</div><div class="settings-value">${Object.keys(DB.knowledge.products).length}</div><div class="settings-arrow">›</div></div>
         <div class="settings-row" onclick="clearKnowledge()"><div class="settings-label" style="color:var(--red)">Borrar conocimiento IA</div></div>
@@ -1570,7 +1740,10 @@ function renderSettings(){
       </div>
     </div>
     <div style="margin:0 16px 16px"><button class="btn-secondary" style="width:100%" onclick="location.reload()">Actualizar app</button></div>
-    <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente</p>`;
+    `:''}
+    ${DB.devMode?`<div style="margin:0 16px 16px"><button class="btn-secondary" style="width:100%;color:var(--txt2);font-size:13px" onclick="DB.devMode=false;S.set('devMode',false);saveDB();renderSettings();showToast('Modo desarrollador desactivado')">Ocultar opciones de desarrollador</button></div>`:''}
+    <p style="text-align:center;font-size:11px;color:var(--txt3);padding:20px">Clarito · Datos guardados localmente</p>
+  `;
 }
 
 function editKnowledgeProducts(){
@@ -1760,6 +1933,21 @@ function removeCard(idx,ci){const c=DB.persons[idx].cards[ci];DB.persons[idx].ca
 function removePerson(idx){if(DB.persons.length<=1){showToast('Debe haber al menos una persona');return;}DB.persons.splice(idx,1);saveDB();closeModal();renderSettings();}
 function savePerson(idx){const n=document.getElementById('ep-name').value.trim();if(n)DB.persons[idx].name=n;saveDB();closeModal();renderSettings();}
 function forgetCard(l4){delete DB.knowledge.cards[l4];saveDB();renderSettings();}
+let _devTaps=0,_devTimer=null;
+function onLogoTap(){
+  _devTaps++;
+  clearTimeout(_devTimer);
+  if(_devTaps>=13){
+    _devTaps=0;
+    DB.devMode=!DB.devMode;
+    S.set('devMode',DB.devMode);
+    saveDB();
+    renderSettings();
+    showToast(DB.devMode?'Modo desarrollador activado 🛠':'Modo desarrollador desactivado',2000);
+  } else {
+    _devTimer=setTimeout(()=>{_devTaps=0;},1200);
+  }
+}
 function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimiento?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">Se eliminan los productos aprendidos. Los tickets se conservan.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="DB.knowledge.products={};saveDB();closeModal();renderSettings();showToast('Borrado')">Borrar</button></div>`);}
 function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Obtén tu key en <strong style="color:var(--accent)">console.cloud.google.com</strong> → APIs y servicios → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Key gratuita en <strong style="color:var(--accent)">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div style="display:flex;gap:10px;margin-top:16px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
