@@ -1288,9 +1288,14 @@ function renderHome(){
 function renderTicketListItem(t){
   const payer=personById(t.payer);
   const color=payer?.color||'#888';
+  const firstProd=t.products&&t.products.length>0?t.products[0].name||t.products[0].rawName||'':'';
   return`<div class="ticket-item" onclick="editItem('${t.id}')">
     <div class="ticket-icon" style="background:${color}22"><svg viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.7"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/></svg></div>
-    <div class="ticket-info"><div class="ticket-store">${t.store||t.category||t.description||'Gasto'}</div><div class="ticket-date">${fmtDate(t.date)}</div></div>
+    <div class="ticket-info">
+      <div class="ticket-store">${t.store||t.category||t.description||'Gasto'}</div>
+      ${firstProd?`<div style="font-size:11px;color:var(--txt3);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px">${firstProd}</div>`:''}
+      <div class="ticket-date">${fmtDate(t.date)}</div>
+    </div>
     <div><div class="ticket-amount">${fmt(t.total)}</div><div class="ticket-payer">${payer?.name||''}</div></div>
   </div>`;
 }
@@ -1426,9 +1431,10 @@ function renderProductRow(prod,i){
   const assignedTo=prod.assignedTo;
   const isShared=!assignedTo;
   const qty=prod.qty||1;
-  // unitPrice es el precio por unidad, finalPrice es el total (unitPrice * qty)
   const unitPrice=prod.unitPrice??prod.finalPrice??prod.price??0;
-  const total=parseFloat((unitPrice*qty).toFixed(2));
+  const hasDiscount=prod.discount&&prod.discount>0;
+  // Si hay descuento, finalPrice ya lo tiene descontado; si no, es unitPrice*qty
+  const total=hasDiscount?parseFloat((prod.finalPrice??0).toFixed(2)):parseFloat((unitPrice*qty).toFixed(2));
   const unitDisplay=unitPrice>0?unitPrice.toFixed(2):'';
 
   const personBtns=DB.persons.map(p=>{
@@ -1459,7 +1465,9 @@ function renderProductRow(prod,i){
           <button onclick="changeQty(${i},-1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
           <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty}×</span>
           <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
-          <span id="total-${i}" style="font-size:12px;font-weight:700;color:var(--txt0);min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
+          ${hasDiscount?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`:''}
+          <span id="total-${i}" style="font-size:12px;font-weight:700;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
+          ${hasDiscount?`<span style="font-size:10px;color:var(--green);white-space:nowrap">-${prod.discount.toFixed(2)} €</span>`:''}
         </div>
       </div>
     </div>
@@ -1695,8 +1703,6 @@ function renderStats(){
   const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);
   const monthT=allT.filter(t=>t.date&&t.date>=monthStart&&t.date<=monthEnd);
   const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
-  const allTimeTotal=allT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
-  const allTimeCount=allT.length;
 
   // Gasto real por persona este mes:
   // - Lo que pagaron de su bolsillo (total del ticket si son el pagador)
@@ -1759,7 +1765,6 @@ function renderStats(){
 
     <div class="stats-grid" style="margin-top:16px">
       <div class="stat-card"><div class="stat-label">Este mes</div><div class="stat-value">${fmt(monthTotal)}</div></div>
-      <div class="stat-card"><div class="stat-label">Total histórico</div><div class="stat-value">${fmt(allTimeTotal)}</div></div>
       <div class="stat-card"><div class="stat-label">Tickets totales</div><div class="stat-value">${allT.length}</div></div>
     </div>
 
@@ -1857,15 +1862,15 @@ function editKnowledgeProducts(){
   if(!prods.length){showToast('No hay productos aprendidos todavía');return;}
   const personOpts=`<option value="">Común</option>`+DB.persons.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   const rows=prods.map(([key,v])=>`
-    <div style="padding:10px 0;border-bottom:1px solid var(--brd)">
-      <div style="font-size:10px;color:var(--txt3);margin-bottom:4px">Original: ${v.ocr_raw?.[0]||key}</div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <div style="padding:12px 0;border-bottom:1px solid var(--brd)">
+      <div style="font-size:11px;color:var(--txt3);margin-bottom:6px">Original: ${v.ocr_raw?.[0]||key}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <input value="${v.alias||key}"
-          style="background:transparent;border:none;border-bottom:1px solid var(--brd);font-size:14px;font-weight:500;color:var(--txt0);flex:1;padding:2px 0"
+          style="background:transparent;border:none;border-bottom:1px solid var(--brd);font-size:16px;font-weight:500;color:var(--txt0);flex:1;padding:2px 0"
           onchange="renameKnowledgeProduct('${key}',this.value)"/>
-        <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:18px;flex-shrink:0">×</button>
+        <button onclick="deleteKnowledgeProduct('${key}')" style="color:var(--red);font-size:20px;flex-shrink:0">×</button>
       </div>
-      <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:12px;padding:4px 8px;width:100%;border-radius:var(--rad-xs);background:var(--bg3);color:var(--txt0);border:1px solid var(--brd)">
+      <select onchange="assignKnowledgeProduct('${key}',this.value)" style="font-size:13px;padding:5px 8px;width:auto;max-width:160px;border-radius:var(--rad-xs);background:var(--bg3);color:var(--txt0);border:1px solid var(--brd)">
         <option value="" ${!v.person?'selected':''}>Común</option>
         ${DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}
       </select>
