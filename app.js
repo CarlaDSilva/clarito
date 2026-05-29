@@ -627,16 +627,21 @@ function parseTicketText(text){
     const NOISE_RX=/^([ABC]$|92$|€\*$|tot$|esp$|\d{2}$|\d+\s*[xX]\s*$)/i; // incl. '4 x'
 
     function isAlcampoPrice(l){
-      return ALCAMPO_PRICE_RX.test(l)||/^,\d{2}\s*[ABC]?$/.test(l);
+      // "1,61 B", ",96", "96 B" (truncated — missing leading digit), ".96"
+      return ALCAMPO_PRICE_RX.test(l)||/^,\d{2}\s*[ABC]?$/.test(l)||/^\d{2}\s+[ABC]$/.test(l);
     }
     function parseAlcampoPrice(l){
       const c=l.replace(/[ABC\s]/g,'').replace(',','.');
-      return c.startsWith('.')?parseFloat('0'+c):parseFloat(c);
+      // Handle "96" (truncated from "0.96") — if result >= 10 it might be truncated
+      const v=c.startsWith('.')?parseFloat('0'+c):parseFloat(c);
+      // "96 B" → 96... but we want 0.96. Check if it's a 2-digit number that looks like cents
+      if(v>=10&&v<100&&/^\d{2}\s+[ABC]$/.test(l)) return v/100;
+      return v;
     }
     function isAlcampoName(l){
       if(!l||l.length<3) return false;
       if(isAlcampoPrice(l)||ALCAMPO_PACK_RX.test(l)||QTY_ONLY_RX.test(l)) return false;
-      if(/^\d{1,3}\s+[A-C]$/.test(l)) return false; // "96 B"
+      // "96 B" is now handled as price by isAlcampoPrice, not filtered here
       if(ALCAMPO_SKIP_RX.test(l)||NOISE_RX.test(l)) return false;
       if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l)) return false;
       if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l)) return false;
@@ -718,13 +723,10 @@ function parseTicketText(text){
           // Column block: pair names[i] with prices[i] in order
           for(let n=0;n<nameRun;n++){
             const nt=tokens[j+n];
-            const entry={name:nt.val,qty:nt.qty,unitP:null,price:tokens[k+n].val,raw:nt.val};
+            const entry={name:nt.val,qty:nt.qty,unitP:null,price:tokens[k+n]?.val??null,raw:nt.val};
             if(pendingPack&&n===0){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}
-            // Apply preBodyQty: if a product in the block has price divisible by preBodyQty
-
             entries.push(entry);
           }
-          // Skip consumed prices
           j=k+nameRun;
           // Also skip total-of-line prices (price that equals unit×qty)
           while(j<tokens.length&&tokens[j].type==='price'){
@@ -762,8 +764,10 @@ function parseTicketText(text){
       if(tk.type==='price'){
         // Orphan price — assign to last entry without price
         if(entries.length>0){
-          for(let k2=entries.length-1;k2>=Math.max(0,entries.length-4);k2--){
-            if(entries[k2].price==null){entries[k2].price=tk.val;break;}
+          for(let k2=entries.length-1;k2>=Math.max(0,entries.length-8);k2--){
+            if(entries[k2].price==null&&entries[k2].unitP==null){
+              entries[k2].price=tk.val;break;
+            }
           }
         }
         j++; continue;
@@ -776,11 +780,33 @@ function parseTicketText(text){
       if(e.price==null&&e.unitP==null) continue;
       const nm=cleanName(e.name);
       if(nm.length<2) continue;
-      const unitP=e.unitP||(e.qty>1&&e.price?(e.price/e.qty):e.price)||0;
-      const qty=e.qty||1;
+      let unitP, qty=e.qty||1;
+      if(e.unitP!=null){
+        const colP=e.price;
+        // If column price is a unit/total confirmation, use pack unitP
+        if(colP==null||Math.abs(colP-e.unitP)<0.02||Math.abs(colP-e.unitP*qty)<0.02){
+          unitP=e.unitP;
+        } else {
+          unitP=colP; // column price overrides pack unit
+        }
+      } else if(qty>1&&e.price!=null){
+        unitP=parseFloat((e.price/qty).toFixed(2));
+      } else {
+        unitP=e.price||0;
+      }
       out.push(makeProduct(nm,e.raw,unitP,qty));
     }
-    // Post-process: apply orphanQty to best matching product
+    // Post-process 1: products with same name and no price → copy from twin
+    for(let k=0;k<out.length;k++){
+      if(out[k].unitPrice===0||out[k].finalPrice===0){
+        const twin=out.find((p,i)=>i!==k&&p.name===out[k].name&&p.unitPrice>0);
+        if(twin){
+          out[k].unitPrice=twin.unitPrice;out[k].price=twin.unitPrice;
+          out[k].finalPrice=parseFloat((twin.unitPrice*(out[k].qty||1)).toFixed(2));
+        }
+      }
+    }
+    // Post-process 2: apply orphanQty to best matching product
     if(orphanQty&&orphanQty>1){
       let bestIdx=-1,bestScore=Infinity;
       for(let k=0;k<out.length;k++){
@@ -1694,6 +1720,7 @@ function renderTickets(){
 
 // ── TICKET EDITOR ──────────────────────────────────────────────
 let currentTicket=null;
+let _releerMode=false; // when true, shows checkboxes for product selection
 function openTicketEditor(ticket){currentTicket=JSON.parse(JSON.stringify(ticket));renderTicketEditor();document.getElementById('ticket-editor').style.display='flex';}
 
 function renderTicketEditor(){
@@ -1733,7 +1760,7 @@ function renderTicketEditor(){
     </div>
     <div class="te-footer">
       <button class="btn-secondary" style="flex:1" onclick="closeTicketEditor()">Cancelar</button>
-      ${DB.groqKey&&currentTicket._imageB64?"<button class='btn-secondary' style='flex:1.5;font-size:12px' onclick='leerConIAVisual()'>Leer con IA</button>":""}
+      ${DB.groqKey&&window._lastTicketB64?(_releerMode?"<button class='btn-primary' style='flex:1.5' onclick='enviarReleer()'>Enviar</button>":"<button class='btn-secondary' style='flex:1' onclick='activarReleer()'>Releer</button>"):""}
       <button class="btn-primary" style="flex:2" onclick="saveTicket()">Guardar</button>
     </div>`;
 }
@@ -1756,6 +1783,19 @@ function renderProductRow(prod,i){
     return`<button class="assign-btn" style="background:${active?p.color+'33':'transparent'};color:${active?p.color:'var(--txt2)'};border-color:${active?p.color:'var(--brd)'};" onclick="assignProduct(${i},'${p.id}')">${p.name}</button>`;
   }).join('');
 
+  if(_releerMode){
+    return`<label class="product-row" style="cursor:pointer" for="releer-check-${i}">
+      <div style="display:flex;align-items:center;gap:12px;padding:4px 0">
+        <input type="checkbox" id="releer-check-${i}" data-idx="${i}"
+          style="width:22px;height:22px;flex-shrink:0;accent-color:var(--green)"
+          onchange="this.closest('.product-row').style.opacity=this.checked?'1':'0.45'">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;font-weight:500;color:var(--txt0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${prod.name||'Sin nombre'}</div>
+          <div style="font-size:12px;color:var(--txt2)">${prod.qty>1?prod.qty+'u · ':''}${prod.unitPrice>0?prod.unitPrice.toFixed(2)+' €/u':''}</div>
+        </div>
+      </div>
+    </label>`;
+  }
   return`<div class="product-row" id="prod-${i}">
     <div class="product-top">
       <div class="confidence-dot ${confClass}"></div>
@@ -1835,8 +1875,76 @@ function removeProduct(i){currentTicket.products.splice(i,1);renderProductsList(
 function addEmptyProduct(){currentTicket.products.push({rawName:'',name:'',price:0,finalPrice:0,qty:1,confidence:1,category:'otro',assignedTo:null,shared:true,pct1:50});renderProductsList();setTimeout(()=>{const l=document.querySelectorAll('.product-row');if(l.length)l[l.length-1].scrollIntoView({behavior:'smooth'});},100);}
 function setTicketPayer(id){currentTicket.payer=id;if(currentTicket.last4)DB.knowledge.cards[currentTicket.last4]=id;renderTicketEditor();}
 function dismissErrors(){currentTicket.errors=[];currentTicket.warnings=[];renderTicketEditor();}
+function activarReleer(){
+  _releerMode=true;
+  renderTicketEditor();
+  showToast('Marca los productos correctos y pulsa Enviar',3000);
+}
+
+async function enviarReleer(){
+  if(!DB.groqKey||!window._lastTicketB64){showToast('Necesitas Groq Key e imagen del ticket');return;}
+  // Collect checked products
+  const confirmed=[];
+  document.querySelectorAll('[id^="releer-check-"]').forEach(cb=>{
+    if(cb.checked){
+      const idx=parseInt(cb.dataset.idx);
+      const p=currentTicket.products[idx];
+      if(p) confirmed.push(p);
+    }
+  });
+  _releerMode=false;
+  renderTicketEditor();
+  showToast('Enviando a Groq...',3000);
+  try{
+    const confirmedList=confirmed.length?
+      '\n\nProductos ya confirmados como correctos (NO los cambies):\n'+
+      confirmed.map(p=>`- ${p.name} (${p.qty}u × ${p.unitPrice.toFixed(2)}€)`).join('\n'):'';
+    const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+DB.groqKey},
+      body:JSON.stringify({
+        model:'meta-llama/llama-4-scout-17b-16e-instruct',
+        max_tokens:1500,
+        messages:[{role:'user',content:[
+          {type:'image_url',image_url:{url:'data:image/jpeg;base64,'+window._lastTicketB64}},
+          {type:'text',text:'Eres un lector de tickets de supermercado. Extrae TODOS los productos con sus cantidades y precios unitarios.'+confirmedList+'\n\nResponde SOLO con JSON sin markdown: {"store":"nombre","total":0.00,"products":[{"name":"NOMBRE","qty":1,"unitPrice":0.00}]}'}
+        ]}]
+      })
+    });
+    const d=await res.json();
+    if(!DB.groqStats) DB.groqStats={calls:0,firstCall:null,tokensUsed:0};
+    DB.groqStats.calls=(DB.groqStats.calls||0)+1;
+    DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(d.usage?.total_tokens||0);
+    if(!DB.groqStats.firstCall) DB.groqStats.firstCall=new Date().toISOString().slice(0,10);
+    S.set('groqStats',JSON.stringify(DB.groqStats));
+    if(d.error){showToast('Error Groq: '+d.error.message,4000);return;}
+    const text=(d.choices?.[0]?.message?.content||'').replace(/\`\`\`json|\`\`\`/g,'').trim();
+    const parsed=JSON.parse(text);
+    if(parsed.products&&parsed.products.length>0){
+      // Merge: keep confirmed products, add/replace rest from Groq
+      const confirmedNames=new Set(confirmed.map(p=>p.name.toLowerCase()));
+      const groqProds=parsed.products
+        .filter(p=>!confirmedNames.has((p.name||'').toLowerCase()))
+        .map(p=>({
+          name:normalizeProdName(p.name||''),rawName:p.name||'',
+          qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0,
+          price:parseFloat(p.unitPrice)||0,
+          finalPrice:parseFloat(((parseFloat(p.unitPrice)||0)*(parseInt(p.qty)||1)).toFixed(2)),
+          confidence:0.9
+        }));
+      currentTicket.products=[...confirmed,...groqProds];
+      if(parsed.store&&!currentTicket.store) currentTicket.store=parsed.store;
+      if(parsed.total&&!currentTicket.total) currentTicket.total=parsed.total;
+      renderTicketEditor();
+      showToast('Groq añadió '+groqProds.length+' productos · '+confirmed.length+' confirmados',3500);
+    } else {
+      showToast('Groq no encontró productos adicionales',3000);
+    }
+  }catch(e){showToast('Error: '+e.message,4000);}
+}
+
 async function leerConIAVisual(){
-  if(!DB.groqKey||!currentTicket||!currentTicket._imageB64){
+  if(!DB.groqKey||!window._lastTicketB64){
     showToast('Necesitas la Groq Key y haber subido el ticket con la cámara');return;
   }
   showToast('Enviando a Groq Vision...',3000);
@@ -1848,7 +1956,7 @@ async function leerConIAVisual(){
         model:'meta-llama/llama-4-scout-17b-16e-instruct',
         max_tokens:1500,
         messages:[{role:'user',content:[
-          {type:'image_url',image_url:{url:'data:image/jpeg;base64,'+currentTicket._imageB64}},
+          {type:'image_url',image_url:{url:'data:image/jpeg;base64,'+window._lastTicketB64}},
           {type:'text',text:'Eres un lector de tickets de supermercado. Extrae los productos con sus cantidades y precios unitarios. Responde SOLO con JSON sin markdown: {"store":"nombre","total":0.00,"products":[{"name":"NOMBRE","qty":1,"unitPrice":0.00}]}'}
         ]}]
       })
@@ -1927,7 +2035,7 @@ function learnFromTicket(t){
     }
   });
 }
-function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;}
+function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;window._lastTicketB64=null;_releerMode=false;}
 function deleteCurrentTicket(){
   if(!currentTicket) return;
   window._deleteTicketId=currentTicket.id;
@@ -2159,8 +2267,19 @@ function renderInventorySection(){
   return preds.slice(0,8).map(p=>{const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div></div>`;}).join('');
 }
 function getPredictions(){
+  // If no tickets but have cached despensa, use that
+  const confirmedTickets=DB.tickets.filter(t=>t.confirmed&&t.date);
+  if(confirmedTickets.length===0&&DB.knowledge?.cachedDespensa?.length){
+    const now=Date.now();
+    return DB.knowledge.cachedDespensa.map(p=>{
+      const lastMs=p.lastDate?new Date(p.lastDate).getTime():now;
+      const daysSince=(now-lastMs)/864e5;
+      const daysLeft=Math.max(0,Math.round(p.freq-daysSince));
+      return{name:p.name,days:daysLeft,freq:p.freq,detail:'Cada ~'+p.freq+'d · hace '+Math.round(daysSince)+'d'};
+    }).sort((a,b)=>a.days-b.days);
+  }
   const ph={};
-  DB.tickets.filter(t=>t.confirmed&&t.date).forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k)return;if(!ph[k])ph[k]={name:p.name,dates:[],category:p.category||'otro'};ph[k].dates.push(d);});});
+  confirmedTickets.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k)return;if(!ph[k])ph[k]={name:p.name,dates:[],category:p.category||'otro'};ph[k].dates.push(d);});});
   const now=Date.now();
   return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};}).sort((a,b)=>a.days-b.days);
 }
@@ -2450,14 +2569,19 @@ function resetStatsConfirm(){
 }
 function doResetStats(){
   const keepDespensa=document.getElementById('keep-despensa')?.checked!==false;
+  if(keepDespensa){
+    // Cachear predicciones de despensa antes de borrar tickets
+    const preds=getPredictions();
+    if(!DB.knowledge) DB.knowledge={products:{},cards:{},cachedDespensa:[]};
+    DB.knowledge.cachedDespensa=preds.map(p=>({
+      name:p.name,freq:p.freq,lastDate:new Date().toISOString().slice(0,10)
+    }));
+  } else {
+    if(DB.knowledge) DB.knowledge.cachedDespensa=[];
+  }
   DB.tickets=[];
   DB.expenses=[];
   DB.settlements=[];
-  if(!keepDespensa&&DB.knowledge){
-    // Clear inventory/despensa data
-    if(DB.knowledge.inventory) DB.knowledge.inventory={};
-    if(DB.knowledge.lastSeen) DB.knowledge.lastSeen={};
-  }
   saveDB();closeModal();showToast('Mes nuevo iniciado');renderPage(currentScreen);
 }
 function resetAll(){openModal(`<div class="modal-title">¿Borrar todo?</div><p style="font-size:14px;color:var(--txt1);margin-bottom:20px">No se puede deshacer.</p><div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="localStorage.clear();location.reload()">Borrar todo</button></div>`);}
