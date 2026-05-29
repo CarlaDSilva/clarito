@@ -362,6 +362,11 @@ function parseTicketText(text){
     lines.some(l=>QTY_OPEN_RX.test(l));
   const isFroiz = store.toLowerCase().includes('froiz') ||
     lines.some(l=>/distribuciones froiz/i.test(l));
+  // Renombrar Alcampo → Auchan
+  if(store.toLowerCase().includes('alcampo')||lines.some(l=>/^alcampo/i.test(l.trim()))){
+    store='Auchan';
+  }
+  const isAlcampo = store==='Auchan' || lines.some(l=>/alcampo/i.test(l)||/auchan/i.test(l));
   // Mercadona digital: tiene cabecera "Descripción" + "P. Unit" en líneas consecutivas
   const isMercadonaDigital = (store.toLowerCase().includes('mercadona')||lines.some(l=>/mercadona/i.test(l))) &&
     lines.some((l,i)=>(/descripci[oó]n/i.test(l)&&i+1<lines.length&&/p\.\s*unit/i.test(lines[i+1]))||
@@ -375,7 +380,7 @@ function parseTicketText(text){
     const standalone=t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
     if(standalone){ time=`${standalone[1].padStart(2,'0')}:${standalone[2]}`; break; }
     // Hora en la misma línea que la fecha: "13/04/2026 09:45" o "22 05 2026 20:47"
-    const inline=t.match(/\d{4}\s+(\d{1,2}):(\d{2})(?::\d{2})?/)||t.match(/\d{2,4}[\/\-]\s*\d{4}\s+(\d{1,2}):(\d{2})/);
+    const inline=t.match(/\d{2,4}\s+(\d{1,2}):(\d{2})(?::\d{2})?/)||t.match(/\d{2,4}[\/\-]\s*\d{2,4}\s+(\d{1,2}):(\d{2})/);
     if(inline){ time=`${inline[1].padStart(2,'0')}:${inline[2]}`; break; }
   }
   // Segunda pasada: fecha y hora inline si no se encontró standalone
@@ -515,7 +520,9 @@ function parseTicketText(text){
   // ── PARSEAR PRODUCTOS ─────────────────────────────────────────
   const products=[];
 
-  if(isFroiz){
+  if(isAlcampo){
+    parseAlcampo(lines, products);
+  } else if(isFroiz){
     parseFroiz(lines, products); // Froiz usa todas las líneas, no solo productLines
   } else if(isMercadonaDigital){
     parseMercadonaDigital(lines, products);
@@ -601,6 +608,139 @@ function parseTicketText(text){
       }
       const nm=cleanName(e.name);
       if(nm.length>=2) out.push(makeProduct(nm,e.raw,unitP,e.qty));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  //  FORMATO ALCAMPO (Auchan)
+  //  OCR caótico: zonas mixtas de nombres-en-bloque / nombre-precio alternado
+  //  - Zona columnas: N nombres seguidos → N precios seguidos (sufijo A/B/C)
+  //  - Zona inline: NOMBRE → PRECIO, o PACK "N x P,PP" ANTES del siguiente nombre
+  //  - Precios truncados: "96 B" = 0,96€, ",96" = 0,96€
+  //  - Ruido: "4 x", "92", "A", "B", "ESP", "TOT", "€*", ",XX" (sin 0 inicial)
+  // ══════════════════════════════════════════════════════════════
+  function parseAlcampo(allLines, out){
+    const ALCAMPO_PRICE_RX=/^,?\d{1,3}[.,]\d{2}\s*[ABC]?\s*$/;  // ",96 B" o "1,61 B" o "3,68"
+    const ALCAMPO_PACK_RX=/^(\d+)\s*[xX]\s*(\d{1,3}[.,]\d{2})$/; // "2 x 1,00"
+    const ALCAMPO_SKIP_RX=/^(factura|simplificada|tarjeta|cambio|num\.|imp\.|base|cuota|iva|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campaña|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*)/i;
+    const NOISE_RX=/^(\d+\s*x\s*$|[ABC]$|92$|€\*$|tot$|esp$|\d{2}$)/i;
+
+    function isAlcampoPrice(l){
+      if(ALCAMPO_PRICE_RX.test(l)) return true;
+      // Precio truncado sin cero: ",96 B"
+      if(/^,\d{2}\s*[ABC]?$/.test(l)) return true;
+      return false;
+    }
+    function parseAlcampoPrice(l){
+      const clean=l.replace(/[ABC\s]/g,'').replace(',','.');
+      // Handle ",96" → "0.96"
+      if(clean.startsWith('.')) return parseFloat('0'+clean);
+      return parseFloat(clean);
+    }
+    function isAlcampoName(l){
+      if(!l||l.length<3) return false;
+      if(isAlcampoPrice(l)||ALCAMPO_PACK_RX.test(l)) return false;
+      if(/^\d{1,3}\s+[A-C]$/.test(l)) return false; // "96 B" truncated price
+      if(ALCAMPO_SKIP_RX.test(l)||NOISE_RX.test(l)) return false;
+      if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l)) return false;
+      if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l)) return false;
+      if(/calle|avda|plaza|s\.a\.|cif\./i.test(l)) return false;
+      if(/^\d{1,2}\/\d{2}\/\d{2}/.test(l)) return false; // fecha
+      if(/\d{4,}/.test(l)&&!/[A-Z]/.test(l)) return false; // código largo
+      return /[A-Za-záéíóúñÁÉÍÓÚÑ]/.test(l); // tiene al menos una letra
+    }
+
+    // Encontrar inicio (después de FACTURA SIMPLIFICADA o nombre tienda)
+    let start=0;
+    for(let i=0;i<allLines.length;i++){
+      if(/factura\s+simplificada/i.test(allLines[i])){start=i+1;break;}
+      if(/^alcampo/i.test(allLines[i])&&i>0){start=i+1;}
+    }
+    // Encontrar fin (TOT, TARJETA, NUM. TOTAL)
+    let end_=allLines.length;
+    for(let i=start;i<allLines.length;i++){
+      const t=allLines[i].trim();
+      if(/^(tot$|tarjeta\s+bancaria|num\.\s*total|cambio|para\s+el\s+cliente)/i.test(t)){end_=i;break;}
+      if(/^€\*/.test(t)){end_=i;break;}
+    }
+    const body=allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l);
+
+    // Estrategia: procesar en dos pasadas
+    // Pasada 1: identificar bloques de nombres-seguidos-de-precios
+    // Pasada 2: extraer nombre+precio pares
+
+    // Simplest approach that works: collect all names and all prices separately,
+    // tracking packs. For consecutive name blocks followed by price blocks, pair by index.
+    // For alternating name/price, pair directly.
+
+    const entries=[]; // {name, qty, packUnit}
+    let pendingPack=null; // {qty, unitP}
+    let i=0;
+
+    // Recoger tokens: nombres, precios, packs en orden
+    const tokens=[];
+    for(const l of body){
+      if(!l||NOISE_RX.test(l)||ALCAMPO_SKIP_RX.test(l)) continue;
+      const packM=l.match(ALCAMPO_PACK_RX);
+      if(packM) tokens.push({type:'pack',qty:parseInt(packM[1]),unitP:parseFloat(packM[2].replace(',','.'))});
+      else if(isAlcampoName(l)) tokens.push({type:'name',val:l});
+      else if(isAlcampoPrice(l)){const p=parseAlcampoPrice(l);if(p>=0) tokens.push({type:'price',val:p});}
+    }
+
+    // Procesar tokens: detectar bloques columna (N names seguidas → N prices seguidas)
+    // vs intercalado (name → price → name → price)
+    let j=0;
+    while(j<tokens.length){
+      const tk=tokens[j];
+      if(tk.type==='pack'){pendingPack={qty:tk.qty,unitP:tk.unitP};j++;continue;}
+      if(tk.type==='name'){
+        // Contar cuántos nombres consecutivos siguen (sin precios ni packs entre ellos)
+        let nameRun=0,k=j;
+        while(k<tokens.length&&tokens[k].type==='name'){nameRun++;k++;}
+        // Contar cuántos precios siguen después
+        let priceRun=0,m=k;
+        while(m<tokens.length&&tokens[m].type==='price'){priceRun++;m++;}
+        if(nameRun>1&&priceRun>=nameRun){
+          // Bloque columna: parear names[i] con prices[i] en orden
+          for(let n=0;n<nameRun;n++){
+            const entry={name:tokens[j+n].val,qty:1,unitP:null,price:tokens[k+n].val,raw:tokens[j+n].val};
+            if(pendingPack&&n===0){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}
+            entries.push(entry);
+          }
+          j=k+nameRun; // skip consumed prices
+        } else {
+          // Nombre individual
+          const entry={name:tk.val,qty:1,unitP:null,price:null,raw:tk.val};
+          if(pendingPack){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}
+          entries.push(entry);
+          j++;
+          // Buscar precio en siguiente token inmediato (intercalado)
+          if(j<tokens.length&&tokens[j].type==='price'){
+            entry.price=tokens[j].val; j++;
+          }
+        }
+        continue;
+      }
+      if(tk.type==='price'){
+        // Precio huérfano — asignar al último entry sin precio
+        if(entries.length>0){
+          for(let k2=entries.length-1;k2>=Math.max(0,entries.length-4);k2--){
+            if(entries[k2].price==null){entries[k2].price=tk.val;break;}
+          }
+        }
+        j++;
+        continue;
+      }
+      j++;
+    }
+
+    // Build products from entries
+    for(const e of entries){
+      if(e.price==null&&e.unitP==null) continue;
+      const nm=cleanName(e.name);
+      if(nm.length<2) continue;
+      const unitPrice=e.unitP||(e.price||0);
+      out.push(makeProduct(nm,e.raw,unitPrice,e.qty));
     }
   }
 
@@ -1695,20 +1835,20 @@ function deleteCurrentTicket(){
 function confirmDeleteTicket(){
   const id=window._deleteTicketId;
   if(!id){closeModal();return;}
+  // Ticket might not be saved yet (freshly scanned) — find it or just close
   const t=DB.tickets.find(tk=>tk.id===id);
-  if(!t){closeModal();return;}
-  const cb=document.getElementById('del-knowledge');
-  if(cb&&cb.checked&&t.products){
-    t.products.forEach(p=>{
-      const raw=(p.rawName||p.name||'').toLowerCase().trim();
-      if(raw&&DB.knowledge&&DB.knowledge.products&&DB.knowledge.products[raw]){
-        delete DB.knowledge.products[raw];
-      }
-    });
+  if(t){
+    // Remove from DB
+    DB.tickets=DB.tickets.filter(tk=>tk.id!==id);
+    saveDB();
   }
-  DB.tickets=DB.tickets.filter(tk=>tk.id!==id);
   window._deleteTicketId=null;
-  saveDB();closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen);
+  closeModal();
+  closeTicketEditor();
+  showToast('Ticket eliminado');
+  // Navigate back to previous screen
+  const target=currentScreen==='tickets'?'tickets':'home';
+  showScreen(target);
 }
 function openManualTicket(){openTicketEditor(getEmptyTicket());}
 function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEditor(t);return;}const e=DB.expenses.find(x=>x.id===id);if(e) openExpenseEditor(e);}
