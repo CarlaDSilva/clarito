@@ -54,6 +54,14 @@ function loadDB(){
   if(!DB.aiQuestions) DB.aiQuestions=[];
   if(!DB.aiConvMessages) DB.aiConvMessages=[];
   DB.persons.forEach(p=>{if(!p.cards)p.cards=[];});
+  // Restore settled state from backup in case main DB lost it
+  try{
+    const settledIds=S.get('settledTicketIds')||[];
+    if(settledIds.length>0){
+      const idSet=new Set(settledIds);
+      DB.tickets.forEach(t=>{if(idSet.has(t.id))t.settled=true;});
+    }
+  }catch(e){}
 }
 function expireOldTickets(){
   // Eliminar tickets con más de 1 mes natural desde su fecha de subida
@@ -66,7 +74,12 @@ function expireOldTickets(){
   });
   if(DB.tickets.length<before) saveDB();
 }
-function saveDB(){S.set('db',DB);}
+function saveDB(){
+  try{
+    const toSave=JSON.parse(JSON.stringify(DB)); // deep clone to avoid reference issues
+    S.set('db',toSave);
+  }catch(e){console.error('saveDB error:',e);}
+}
 
 // ── HELPERS ────────────────────────────────────────────────────
 const fmt=n=>isNaN(n)||n==null?'0,00 €':Number(n).toFixed(2).replace('.',',')+' €';
@@ -602,17 +615,43 @@ function parseTicketText(text){
       else if(/^[A-ZÁÉÍÓÚÑ]/.test(t)&&t.length>=3){entries.push({name:t,qty:1,raw:t});}
     }
 
-    // Recoger precios (excluir 0,00 de parking y valores de IVA)
-    // Los precios vienen en pares [unit, total] cuando qty>1, o solos cuando qty=1
+    // Regex para detectar línea con precio inline al final
+    const INLINE_PRICE_RX=/^(\d+)\s+(.+?)\s+(\d{1,3}[.,]\d{2})$/;
+    // Recoger entradas y precios, manejando formato inline "2 NATA 15% SIN LACTOSA 2,40"
+    const inlineEntries=[]; // {name, qty, unitPrice} — para productos con precio inline
     const allPrices=[];
     let pastTotal=false;
+    const revisedBody=[];
     for(const l of body){
       const t=l.trim();
-      if(/^(entrada|salida)/i.test(t)){pastTotal=true;continue;}
-      if(pastTotal) continue;
+      if(/^(entrada|salida)/i.test(t)){pastTotal=true;revisedBody.push(l);continue;}
+      if(pastTotal){revisedBody.push(l);continue;}
+      // Check if line has inline price: "2 NOMBRE PRECIO"
+      const inlineM=t.match(INLINE_PRICE_RX);
+      if(inlineM){
+        const qty=parseInt(inlineM[1]);
+        const name=inlineM[2].trim();
+        const unitPrice=parseFloat(inlineM[3].replace(',','.'));
+        // Only treat as inline if name looks like a product (starts uppercase)
+        if(/^[A-ZÁÉÍÓÚÑ\d]/.test(name)&&name.length>=3&&qty>=1&&qty<=99){
+          inlineEntries.push({name,qty,unitPrice,raw:t,skipNextTotal:parseFloat((unitPrice*qty).toFixed(2))});
+          revisedBody.push(l);
+          continue;
+        }
+      }
       // Precio: número decimal con coma o punto, puede ser 0,00
       const pm=t.match(/^(\d{1,4}[.,]\d{2})$/);
-      if(pm) allPrices.push(parseFloat(pm[1].replace(',','.')));
+      if(pm){
+        const v=parseFloat(pm[1].replace(',','.'));
+        // Skip if this is the line-total of an inline entry
+        const isInlineTotal=inlineEntries.some(e=>{
+          if(e._totalConsumed) return false;
+          if(Math.abs(e.skipNextTotal-v)<0.02){e._totalConsumed=true;return true;}
+          return false;
+        });
+        if(!isInlineTotal) allPrices.push(v);
+      }
+      revisedBody.push(l);
     }
 
     // Asignar precios a entradas
@@ -636,6 +675,11 @@ function parseTicketText(text){
       const unitP=afterTotalPrices[api]; api++;
       const nm=cleanName(e.name);
       if(nm.length>=2) out.push(makeProduct(nm,e.raw,unitP,e.qty));
+    }
+    // Add inline entries (products with price on same line)
+    for(const e of inlineEntries){
+      const nm=cleanName(e.name);
+      if(nm.length>=2) out.push(makeProduct(nm,e.raw,e.unitPrice,e.qty));
     }
   }
 
@@ -2077,38 +2121,35 @@ async function leerConIAVisual(){
   }catch(e){showToast('Error: '+e.message,4000);}
 }
 function saveTicket(){
-  if(window._savingTicket) return; // prevent double-save
+  if(window._savingTicket) return;
   window._savingTicket=true;
-  const t=currentTicket;
-  // Flush any pending input values from DOM before saving
-  // (iOS may not fire onblur before the button tap registers)
-  document.querySelectorAll('.product-price-input').forEach((el,i)=>{
-    if(el.value&&t.products[i]){
-      t.products[i].unitPrice=parsePrice(el.value);
-      t.products[i].finalPrice=parseFloat((t.products[i].unitPrice*(t.products[i].qty||1)).toFixed(2));
-    }
-  });
-  const storeEl=document.querySelector('input[oninput*="currentTicket.store"]');
-  if(storeEl) t.store=storeEl.value;
-  const totalEl=document.querySelector('input[oninput*="currentTicket.total"]');
-  if(totalEl) t.total=parseFloat(totalEl.value.replace(',','.'))||t.total;
-  const dateEl=document.querySelector('input[type="date"]');
-  if(dateEl&&dateEl.value) t.date=dateEl.value;
-  t.confirmed=true;
-  t.createdAt=t.createdAt||new Date().toISOString().slice(0,10);
-  if(!t.total||t.total===0) t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
-  learnFromTicket(t);
-  const idx=DB.tickets.findIndex(x=>x.id===t.id);
-  if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
-  saveDB();
-  window._savingTicket=false;
+  try{
+    const t=currentTicket;
+    if(!t){window._savingTicket=false;return;}
+    // Flush DOM inputs safely
+    try{
+      document.querySelectorAll('.product-price-input').forEach((el,i)=>{
+        if(el.value&&t.products&&t.products[i]){
+          t.products[i].unitPrice=parsePrice(el.value);
+          t.products[i].finalPrice=parseFloat((t.products[i].unitPrice*(t.products[i].qty||1)).toFixed(2));
+        }
+      });
+    }catch(e){}
+    t.confirmed=true;
+    t.createdAt=t.createdAt||new Date().toISOString().slice(0,10);
+    if(!t.total||t.total===0) t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
+    learnFromTicket(t);
+    const idx=DB.tickets.findIndex(x=>x.id===t.id);
+    if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
+    saveDB();
+  }finally{
+    window._savingTicket=false;
+  }
   closeTicketEditor();
   showToast('Ticket guardado');
-  // Force re-render of current screen regardless of whether it changed
   const targetScreen=currentScreen==='tickets'?'tickets':'home';
   currentScreen=targetScreen;
   ({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[targetScreen]?.();
-  document.getElementById('nav-'+targetScreen)?.classList.add('active');
 }
 function learnFromTicket(t){
   if(t.last4&&t.payer){
@@ -2277,6 +2318,9 @@ function confirmSettle(){
     msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor.name}`,amount,owes});
   DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});
   DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});
+  // Also save settled IDs separately as backup
+  const settledIds=DB.tickets.filter(t=>t.settled).map(t=>t.id);
+  S.set('settledTicketIds',settledIds);
   saveDB();closeModal();showToast('¿Está todo Clarito?',3000);currentScreen='balance';renderBalance();
 }
 
