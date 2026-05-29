@@ -835,16 +835,14 @@ function parseTicketText(text){
   //  Hay basura OCR antes: "82", "ooo", "EUR" — filtrar
   // ══════════════════════════════════════════════════════════════
   function parseLidlInline(pLines, out){
-    // Lidl iPhone/iPad mixed format:
-    // Nombres + "Desc." markers → bloque de precios B/A + negativos
-    // "Desc." indica que el siguiente precio negativo va a ese producto
+    // Lidl formato mixto:
+    // - "Desc." puede aparecer ANTES del precio (iPad) o DESPUÉS (iPhone)
+    // - Los precios negativos van al producto marcado con Desc. en orden
     //
-    // Estrategia unificada:
-    // 1. Recoger (nombre, hasDiscount) en orden
-    // 2. Recoger precios B/A en orden, y negativos como descuentos
-    // 3. Parear: precio[k] → nombre[k], descuento_negativo → al producto marcado con Desc.
+    // Estrategia: recorrer líneas marcando qué productos tienen Desc.
+    // y recoger precios positivos y negativos por separado.
+    // Los negativos se asignan en orden a los productos marcados con Desc.
 
-    // Empezar después del NIF
     let startIdx=0;
     {const nifIdx=pLines.findIndex(l=>/^nif\b/i.test(l.trim()));if(nifIdx>=0)startIdx=nifIdx+1;}
     const lines=pLines.slice(startIdx);
@@ -859,30 +857,62 @@ function parseTicketText(text){
       if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l)) return false;
       if(/^(82|ooo|'|"|eur$)$/i.test(l)) return false;
       if(LIDL_PRICE_RX.test(l)||isPrice(l)||UNIT_PRICE_X_RX.test(l)) return false;
-      if(/^\d+$/.test(l)) return false;
-      if(/^-\d{1,3}[.,]\d{2}$/.test(l)) return false; // precio negativo (descuento)
+      if(/^-?\d+$/.test(l)) return false;
+      if(/^-\d{1,3}[.,]\d{2}$/.test(l)) return false;
       if(isKgInfo(l)||WEIGHT_RX.test(l)||MULT_RX.test(l)) return false;
-      if(/^\d+g\s*[\(\d]/i.test(l)) return false; // "4G (1" basura OCR
+      if(/^\d+g\s*[\(\d]/i.test(l)) return false;
       return true;
     }
 
-    // Recoger entradas: {name, hasDiscount}
+    // Recoger entradas: nombre + si tiene Desc. (antes o después del precio)
+    // Recorremos todas las líneas en orden y marcamos
     const entries=[];
+    const discountedNames=new Set(); // índices en entries que tienen Desc.
+
     let i=0;
     while(i<lines.length){
       const l=lines[i].trim(); i++;
+
+      if(/^desc\.?$/i.test(l)){
+        // Desc. → marca el nombre más reciente O el siguiente
+        // Buscamos hacia atrás el último entry sin hasDiscount ya marcado
+        // y hacia adelante si el siguiente es un nombre
+        let marked=false;
+        // ¿El entry anterior aún no tiene Desc.?
+        for(let k=entries.length-1;k>=Math.max(0,entries.length-3);k--){
+          if(!entries[k].hasDiscount){entries[k].hasDiscount=true;marked=true;break;}
+        }
+        // Si no se marcó nada, marcamos el siguiente nombre que viene
+        if(!marked) {
+          // buscar hacia adelante el siguiente nombre
+          for(let j=i;j<Math.min(i+4,lines.length);j++){
+            const nxt=lines[j].trim();
+            if(isProductName(nxt)){
+              // Marcar ese futuro entry
+              entries.push({name:nxt,hasDiscount:true,kgInfo:null,pendingIdx:j+startIdx});
+              i=j+1; marked=true; break;
+            }
+            if(LIDL_PRICE_RX.test(nxt)||isPrice(nxt)) break;
+          }
+        }
+        continue;
+      }
+
       if(!isProductName(l)) continue;
-      // Mirar si sigue "Desc." → este producto tiene descuento
-      let hasDiscount=false;
-      if(i<lines.length&&/^desc\.?$/i.test(lines[i].trim())){hasDiscount=true;i++;}
-      // Mirar si sigue pack (2,49x → 2)
+
+      // Es un nombre — ¿ya fue pre-añadido por un Desc. futuro?
+      const preIdx=entries.findIndex(e=>e.pendingIdx===i-1+startIdx);
+      if(preIdx>=0) continue; // ya está en entries
+
       let kgInfo=null;
-      if(i<lines.length&&MULT_RX.test(lines[i].trim())){kgInfo=lines[i].trim();i++;
-        if(i<lines.length&&/^eur\/kg/i.test(lines[i].trim()))i++;}
-      entries.push({name:l,hasDiscount,kgInfo});
+      if(i<lines.length&&MULT_RX.test(lines[i].trim())){
+        kgInfo=lines[i].trim();i++;
+        if(i<lines.length&&/^eur\/kg/i.test(lines[i].trim()))i++;
+      }
+      entries.push({name:l,hasDiscount:false,kgInfo});
     }
 
-    // Recoger precios positivos B/A en orden de documento
+    // Recoger todos los precios positivos B/A en orden de documento
     const posPrices=[];
     for(const l of lines){
       const t=l.trim();
@@ -899,9 +929,8 @@ function parseTicketText(text){
       out.push(makeProduct(nm,e.name,price,1));
     }
 
-    // Aplicar descuentos negativos a los productos marcados con Desc.
-    // Los negativos van en orden a los entries que tienen hasDiscount=true
-    const discEntries=entries.map((e,k)=>({k,has:e.hasDiscount})).filter(x=>x.has);
+    // Aplicar descuentos negativos a los productos con hasDiscount=true, en orden
+    const discEntries=entries.map((e,k)=>k).filter(k=>entries[k].hasDiscount);
     const negAmounts=[];
     for(const l of lines){
       const t=l.trim();
@@ -910,7 +939,7 @@ function parseTicketText(text){
         negAmounts.push(parseFloat(m[1].replace(',','.')));
       }
     }
-    discEntries.forEach(({k},j)=>{
+    discEntries.forEach((k,j)=>{
       const disc=negAmounts[j];
       const prod=out[k];
       if(!prod||!disc) return;
@@ -1587,13 +1616,16 @@ function learnFromTicket(t){
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;}
 function deleteCurrentTicket(){
   if(!currentTicket) return;
+  // Store id in window var to avoid quote escaping issues
+  window._deleteTicketId=currentTicket.id;
   const t=currentTicket;
   const hasProducts=t.products&&t.products.length>0;
   const checkboxHtml=hasProducts?'<label style="display:flex;align-items:center;gap:10px;margin-bottom:16px;font-size:14px;color:var(--txt1)"><input type="checkbox" id="del-knowledge" style="width:18px;height:18px"> Eliminar también los productos aprendidos de este ticket</label>':'';
-  const delHtml='<div class="modal-title">Eliminar ticket</div><p style="font-size:14px;color:var(--txt1);line-height:1.5;margin-bottom:16px">¿Eliminar el ticket de '+(t.store||'este supermercado')+'?</p>'+checkboxHtml+'<div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="confirmDeleteTicket(\''+t.id+'\')">Eliminar</button></div>';
-  openModal(delHtml);
+  openModal('<div class="modal-title">Eliminar ticket</div><p style="font-size:14px;color:var(--txt1);line-height:1.5;margin-bottom:16px">¿Eliminar el ticket de '+(t.store||'este supermercado')+'?</p>'+checkboxHtml+'<div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-danger" style="flex:1" onclick="confirmDeleteTicket()">Eliminar</button></div>');
 }
-function confirmDeleteTicket(id){
+function confirmDeleteTicket(){
+  const id=window._deleteTicketId;
+  if(!id){closeModal();return;}
   const t=DB.tickets.find(tk=>tk.id===id);
   if(!t){closeModal();return;}
   const cb=document.getElementById('del-knowledge');
@@ -1606,6 +1638,7 @@ function confirmDeleteTicket(id){
     });
   }
   DB.tickets=DB.tickets.filter(tk=>tk.id!==id);
+  window._deleteTicketId=null;
   saveDB();closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen);
 }
 function openManualTicket(){openTicketEditor(getEmptyTicket());}
