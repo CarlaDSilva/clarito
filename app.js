@@ -555,26 +555,48 @@ function parseTicketText(text){
     // Encontrar inicio (después de "Descripción P. Unit Importe")
     let start=0;
     for(let i=0;i<allLines.length;i++){
+      // Same line: "Descripción P. Unit Importe"
       if(/descripci[oó]n/i.test(allLines[i])&&/p\.\s*unit/i.test(allLines[i])){start=i+1;break;}
-      if(/descripci[oó]n/i.test(allLines[i])&&i+2<allLines.length&&/p\.\s*unit/i.test(allLines[i+1])){start=i+3;break;} // sep lines
+      // Next line is "P. Unit ..." (may also contain Imp/Importe on same line)
+      if(/descripci[oó]n/i.test(allLines[i])&&i+1<allLines.length&&/p\.\s*unit/i.test(allLines[i+1])){
+        // Check if the line after P.Unit is "Importe" (separate) or already a product
+        const afterPUnit=allLines[i+2]?.trim()||'';
+        const isImporte=/^imp(orte)?/i.test(afterPUnit);
+        start=isImporte?i+3:i+2; break;
+      }
       if(/p\.\s*unit/i.test(allLines[i])&&i>0&&/descripci[oó]n/i.test(allLines[i-1])){start=i+2;break;}
     }
-    // Cortar en TOTAL
+    // Cortar en TOTAL, collecting orphan prices that follow
     let end_=allLines.length;
+    const afterTotalPrices=[];
     for(let i=start;i<allLines.length;i++){
-      if(/^total\s*[\(€)]/i.test(allLines[i].trim())||/^entrada\b/i.test(allLines[i].trim())){end_=i;break;}
+      if(/^total\s*[\(€)]/i.test(allLines[i].trim())||/^entrada\b/i.test(allLines[i].trim())){
+        end_=i;
+        // Collect prices after TOTAL that belong to last products without prices
+        // Skip TARJETA line but continue collecting prices after it
+        for(let j=i+1;j<Math.min(i+10,allLines.length);j++){
+          const pt=allLines[j].trim();
+          if(!pt||/^(RR|aut:|ШПАЗ|noo|util)/i.test(pt)) continue; // skip OCR garbage
+          if(/^(importe:|tarj\.?\s*bancaria:|iva\b)/i.test(pt)) break; // stop at payment section
+          if(/^tarjeta bancaria$/i.test(pt)) continue; // skip this line but keep going
+          const pm=pt.match(/^(\d{1,3}[.,]\d{2})$/);
+          if(pm){const v=parseFloat(pm[1].replace(',','.'));if(v>0&&v<20)afterTotalPrices.push(v);}
+        }
+        break;
+      }
     }
     const body=allLines.slice(start,end_);
 
     // Recoger entradas: {name, qty}
     const entries=[];
-    const QTY_NAME_RX=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s\/\-'.]+)$/;
+    const QTY_NAME_RX=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s\/\-'.%&C]+)$/;
     for(const l of body){
       const t=l.trim();
       if(!t||t.length<2) continue;
       if(isPrice(t)||/^[0-9,.]+$/.test(t)) continue;
       if(isSkip(t)||BARCODE_RX.test(t)||SEP_RX.test(t)) continue;
-      if(/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n)/i.test(t)) continue;
+      if(/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n|uf\ |jati|шп|siso|utillos)/i.test(t)) continue;
+      if(/^[a-záéíóúñ]{2,}\s+[a-z]/i.test(t)&&t.length>8&&!/^\d/.test(t)&&!QTY_NAME_RX.test(t)) continue; // OCR garbage
       const m=t.match(QTY_NAME_RX);
       if(m){entries.push({name:m[2].trim(),qty:parseInt(m[1]),raw:t});}
       else if(/^[A-ZÁÉÍÓÚÑ]/.test(t)&&t.length>=3){entries.push({name:t,qty:1,raw:t});}
@@ -594,18 +616,24 @@ function parseTicketText(text){
     }
 
     // Asignar precios a entradas
-    // Para qty=1: consume 1 precio (el unit)
-    // Para qty>1: consume 2 precios (unit + total), usar el unit
     let pi=0;
+    const pendingEntries=[];
     for(const e of entries){
-      if(pi>=allPrices.length) break;
+      if(pi>=allPrices.length){pendingEntries.push(e);continue;}
       const unitP=allPrices[pi]; pi++;
-      if(unitP===0&&e.name.toUpperCase().includes('PARKING')) continue; // skip parking
+      if(unitP===0&&e.name.toUpperCase().includes('PARKING')) continue;
       if(e.qty>1&&pi<allPrices.length){
-        // Siguiente precio es el total de línea — verificar
         const lineTotal=allPrices[pi];
-        if(Math.abs(lineTotal-unitP*e.qty)<0.02) pi++; // consumir el total
+        if(Math.abs(lineTotal-unitP*e.qty)<0.02) pi++;
       }
+      const nm=cleanName(e.name);
+      if(nm.length>=2) out.push(makeProduct(nm,e.raw,unitP,e.qty));
+    }
+    // Assign afterTotalPrices to pending entries (products without prices in the main body)
+    let api=0;
+    for(const e of pendingEntries){
+      if(api>=afterTotalPrices.length) break;
+      const unitP=afterTotalPrices[api]; api++;
       const nm=cleanName(e.name);
       if(nm.length>=2) out.push(makeProduct(nm,e.raw,unitP,e.qty));
     }
@@ -2049,15 +2077,38 @@ async function leerConIAVisual(){
   }catch(e){showToast('Error: '+e.message,4000);}
 }
 function saveTicket(){
-  const t=currentTicket;t.confirmed=true;
+  if(window._savingTicket) return; // prevent double-save
+  window._savingTicket=true;
+  const t=currentTicket;
+  // Flush any pending input values from DOM before saving
+  // (iOS may not fire onblur before the button tap registers)
+  document.querySelectorAll('.product-price-input').forEach((el,i)=>{
+    if(el.value&&t.products[i]){
+      t.products[i].unitPrice=parsePrice(el.value);
+      t.products[i].finalPrice=parseFloat((t.products[i].unitPrice*(t.products[i].qty||1)).toFixed(2));
+    }
+  });
+  const storeEl=document.querySelector('input[oninput*="currentTicket.store"]');
+  if(storeEl) t.store=storeEl.value;
+  const totalEl=document.querySelector('input[oninput*="currentTicket.total"]');
+  if(totalEl) t.total=parseFloat(totalEl.value.replace(',','.'))||t.total;
+  const dateEl=document.querySelector('input[type="date"]');
+  if(dateEl&&dateEl.value) t.date=dateEl.value;
+  t.confirmed=true;
+  t.createdAt=t.createdAt||new Date().toISOString().slice(0,10);
   if(!t.total||t.total===0) t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
   learnFromTicket(t);
   const idx=DB.tickets.findIndex(x=>x.id===t.id);
   if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
   saveDB();
-  closeTicketEditor();showToast('Ticket guardado');
+  window._savingTicket=false;
+  closeTicketEditor();
+  showToast('Ticket guardado');
+  // Force re-render of current screen regardless of whether it changed
   const targetScreen=currentScreen==='tickets'?'tickets':'home';
-  showScreen(targetScreen);
+  currentScreen=targetScreen;
+  ({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[targetScreen]?.();
+  document.getElementById('nav-'+targetScreen)?.classList.add('active');
 }
 function learnFromTicket(t){
   if(t.last4&&t.payer){
@@ -2209,7 +2260,7 @@ function renderBalance(){
 function settleAccounts(){
   const {owes,amount}=calcBalance();
   if(amount<0.01){showToast('No hay deuda que saldar');return;}
-  openModal(`<div class="modal-title">¿Saldar cuentas?</div>
+  openModal(`<div class="modal-title">¿Está todo Clarito?</div>
     <p style="font-size:14px;color:var(--txt1);margin-bottom:20px">Se registrará la liquidación a día de hoy.</p>
     <div style="display:flex;gap:10px"><button class="btn-secondary" style="flex:1" onclick="closeModal()">Cancelar</button><button class="btn-primary" style="flex:2" onclick="confirmSettle()">Confirmar</button></div>`);
 }
@@ -2226,7 +2277,7 @@ function confirmSettle(){
     msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor.name}`,amount,owes});
   DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});
   DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});
-  saveDB();closeModal();showToast('¿Está todo Clarito?',3000);renderBalance();
+  saveDB();closeModal();showToast('¿Está todo Clarito?',3000);currentScreen='balance';renderBalance();
 }
 
 // ── STATS ──────────────────────────────────────────────────────
@@ -2771,7 +2822,7 @@ function generateAIQuestions(ticket){
 
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
-DB.aiConvMessages=[];saveDB();
+DB.aiConvMessages=[];
 expireOldTickets();
 setTimeout(()=>{
   hideSplash();
