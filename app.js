@@ -500,7 +500,7 @@ function parseTicketText(text){
 
   // ── Cortar en línea de total / impuestos ──────────────────────
   // Todo lo que viene después de la primera línea de corte no es producto
-  const CUT_RX=/^(total[\s.(]*[€$)]*$|art\.?[\s.]*total[\s\w]*|total[\s.]*a[\s.]*p\w+|tipo\s*$|====+|base\s*$|cuota\s*$|entrada\b|salida\b)/i;
+  const CUT_RX=/^(total[\s.(€$):]*$|art\.?[\s.]*total[\s\w]*|total[\s.]*a[\s.]*p\w+|tipo\s*$|====+|base\s*$|cuota\s*$|entrada\b|salida\b)/i;
   // Pre-detectar formato Lidl columnas antes de cortar
   // En Lidl columnas los precios B/A vienen DESPUÉS de TOTAL — no cortar en TOTAL
   // Detectar Lidl columnas inline (sin usar LIDL_PRICE_RX que aún no está declarado)
@@ -1965,10 +1965,10 @@ function renderProductRow(prod,i){
           <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty}×</span>
           <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
           ${hasDiscount
-            ?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through;text-align:right">${(unitPrice*qty).toFixed(2)} €</span>`
-            :qty>1?`<span style="font-size:10px;color:var(--txt3);text-align:right">${unitPrice.toFixed(2)} €</span>`
+            ?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through;display:block;text-align:right">${(unitPrice*qty).toFixed(2)} €</span>`
+            :qty>1?`<span style="font-size:10px;color:var(--txt2);display:block;text-align:right">${unitPrice.toFixed(2)} €/u</span>`
             :''}
-          <span id="total-${i}" style="font-size:${(hasDiscount||qty>1)?'15':'12'}px;font-weight:700;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
+          <span id="total-${i}" style="font-size:${(hasDiscount||qty>1)?'17':'13'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;display:block">${total>0?total.toFixed(2)+' €':''}</span>
         </div>
       </div>
     </div>
