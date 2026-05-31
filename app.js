@@ -1104,6 +1104,24 @@ function parseTicketText(text){
         continue;
       }
 
+      // Standalone "N x" line (qty sin precio en la misma línea, e.g. "2 x")
+      const qtyStandaloneM=l.match(/^(\d+)\s+[xX]\s*$/);
+      if(qtyStandaloneM){
+        const qty=parseInt(qtyStandaloneM[1]);
+        let unitPrice=null;
+        // Next line: unit price (may have suffix like ">")
+        if(i<pLines.length){const np=pLines[i].trim();if(isPrice(np)){unitPrice=fp(np);i++;}}
+        // Next line: total price — consume it
+        if(i<pLines.length&&isPrice(pLines[i].trim())) i++;
+        if(!unitPrice) continue;
+        if(out.length>0){
+          const last=out[out.length-1];
+          last.qty=qty; last.unitPrice=unitPrice; last.price=unitPrice;
+          last.finalPrice=parseFloat((unitPrice*qty).toFixed(2));
+        }
+        continue;
+      }
+
       // Bloque qty multilínea "N x (" → nombre ya está en out
       const qtyOpenM=l.match(QTY_OPEN_RX);
       if(qtyOpenM){
@@ -1979,7 +1997,7 @@ function renderProductRow(prod,i){
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty>1?qty+'×':''}</span>
             ${hasDiscount
-              ?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`
+              ?`<span style="font-size:10px;color:var(--txt3);opacity:0.55;text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`
               :qty>1?`<span style="font-size:10px;color:var(--txt3)">${unitPrice.toFixed(2)} €</span>`
               :''}
             <span style="font-size:${(hasDiscount||qty>1)?'15':'12'}px;font-weight:700;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
