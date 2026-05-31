@@ -520,7 +520,20 @@ function parseTicketText(text){
   for(let ti=0;ti<lines.length;ti++){
     if(CUT_RX_ACTIVE.test(lines[ti].trim())){cutIdx=ti;break;}
   }
-  const productLines=lines.slice(0,cutIdx);
+  // For Lidl: if prices B/A appear after the cut point, extend productLines to include them
+  const _lidlPriceRxCut=/^\d{1,3}[.,]\d{2}\s*[A-Z]\s*$/;
+  const _isLidlFormat=lines.some(l=>/^nif\s*a60195278/i.test(l.trim())||/^lidl\s+super/i.test(l.trim()));
+  let productLines;
+  if(_isLidlFormat&&cutIdx<lines.length){
+    let lastLidlPrice=cutIdx-1;
+    for(let _li=cutIdx;_li<Math.min(cutIdx+15,lines.length);_li++){
+      if(_lidlPriceRxCut.test(lines[_li].trim())) lastLidlPrice=_li;
+      if(/^(\d{8,}|venta\b|mastercard|visa\s+debit|tarj)/i.test(lines[_li].trim())) break;
+    }
+    productLines=lines.slice(0,lastLidlPrice+1);
+  } else {
+    productLines=lines.slice(0,cutIdx);
+  }
 
   // ── Regexes específicos de formato Lidl ──────────────────────
   const LIDL_PRICE_RX=/^(\d{1,3}[.,]\d{2})\s*[A-Z]\s*$/; // "1,15 B", "3,25 A"
@@ -1260,6 +1273,12 @@ function parseTicketText(text){
       return true;
     }
 
+
+    function extractQtyXFromName(l){
+      // "AGUA MINERAL NATURAL 0,25x" — unit price and qty marker inline in name
+      const m=l.match(/^(.+?)\s+(\d{1,3}[.,]\d{2})[xX]$/);
+      return m?{name:m[1].trim(),unitP:parseFloat(m[2].replace(',','.'))}:null;
+    }
     // Recoger entradas: nombre + si tiene Desc. (antes o después del precio)
     // Recorremos todas las líneas en orden y marcamos
     const entries=[];
@@ -1269,7 +1288,20 @@ function parseTicketText(text){
     while(i<lines.length){
       const l=lines[i].trim(); i++;
 
-      if(/^desc\.?$/i.test(l)){
+      // "AGUA MINERAL NATURAL 0,25x" — name with inline unit price marker
+      const qtyXM=extractQtyXFromName(l);
+      if(qtyXM&&i<lines.length){
+        // Next line should be qty (integer)
+        const nextL=lines[i].trim();
+        const qty=parseInt(nextL);
+        if(qty>=1&&qty<=99&&/^\d+$/.test(nextL)){
+          entries.push({name:qtyXM.name,hasDiscount:false,kgInfo:null,inlineUnit:qtyXM.unitP,inlineQty:qty});
+          i++; // consume qty line
+          continue;
+        }
+      }
+
+      if(/^desc\.?$/i.test(l)||/^promo\s+lidl/i.test(l)){
         // Desc. → marca el nombre más reciente O el siguiente
         // Buscamos hacia atrás el último entry sin hasDiscount ya marcado
         // y hacia adelante si el siguiente es un nombre
@@ -1335,12 +1367,22 @@ function parseTicketText(text){
     }
 
     // Parear nombres con precios positivos por posición
+    // Entries with inlineUnit skip the price queue (they have their own price+qty)
+    let priceIdx=0;
     for(let k=0;k<entries.length;k++){
       const e=entries[k];
-      const price=posPrices[k];
-      if(price==null) continue;
       const nm=cleanName(e.name);
       if(nm.length<2) continue;
+      // Inline unit+qty entry (AGUA MINERAL 0,25x / 2)
+      if(e.inlineUnit!=null){
+        out.push(makeProduct(nm,e.name,e.inlineUnit,e.inlineQty||1));
+        // Also consume the line-total from posPrices if it matches
+        const expectedTotal=parseFloat((e.inlineUnit*(e.inlineQty||1)).toFixed(2));
+        if(posPrices[priceIdx]!=null&&Math.abs(posPrices[priceIdx]-expectedTotal)<0.02) priceIdx++;
+        continue;
+      }
+      const price=posPrices[priceIdx]; priceIdx++;
+      if(price==null) continue;
       // Check if there's an x-marker for this entry
       const unitP=xByEntry[k];
       if(unitP){
@@ -1960,7 +2002,7 @@ function renderProductRow(prod,i){
             value="${unitDisplay}"
             placeholder="0,00"
             inputmode="decimal"
-            style="width:64px"
+            style="width:64px;color:${(hasDiscount||qty>1)?'var(--txt3)':'var(--txt0)'};font-size:${(hasDiscount||qty>1)?'11':'13'}px"
             onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
             onblur="if(!this.value)this.value='0.00';updateUnitPrice(${i},this.value)"
             oninput="updateUnitPrice(${i},this.value)"/>
