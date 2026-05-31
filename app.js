@@ -1406,6 +1406,8 @@ function parseTicketText(text){
       if(MULT_RX.test(trimmed)||UNIT_PRICE_X_RX.test(trimmed)) continue;
       if(isKgInfo(trimmed)||WEIGHT_RX.test(trimmed)) continue;
       if(store&&trimmed.toLowerCase()===store.toLowerCase()) continue;
+      // Filter internal ticket codes: CJR:311657, N.FRA:T21287, TIENDA: 644, etc.
+      if(/^[A-Z.]{2,8}[:.]\s*[A-Z0-9T]{3,}$/i.test(trimmed)) continue;
 
       const lidlInlineM=trimmed.match(/^(.+?)\s+(\d{1,3}[.,]\d{2})\s*[A-Z]?\s*$/);
       if(lidlInlineM){
@@ -1442,6 +1444,8 @@ function parseTicketText(text){
         if(!next){j++;continue;}
         if(isPrice(next)||isLidlPrice(next)){priceLines.push(parseLidlPrice(next)||parsePrice(next));j++;}
         else if(isKgInfo(next)||WEIGHT_RX.test(next)||MULT_RX.test(next)){j++;}
+        // Skip internal codes (CJR:311657) between name and price
+        else if(/^[A-Z.]{2,8}[:.]\s*[A-Z0-9T]{3,}$/i.test(next)){j++;}
         else break;
       }
       if(priceLines.length>0){
@@ -1966,9 +1970,9 @@ function renderProductRow(prod,i){
           <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
           ${hasDiscount
             ?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through;display:block;text-align:right">${(unitPrice*qty).toFixed(2)} €</span>`
-            :qty>1?`<span style="font-size:10px;color:var(--txt2);display:block;text-align:right">${unitPrice.toFixed(2)} €/u</span>`
+            :qty>1?`<span style="font-size:10px;color:var(--txt3);display:block;text-align:right">${unitPrice.toFixed(2)} €/u</span>`
             :''}
-          <span id="total-${i}" style="font-size:${(hasDiscount||qty>1)?'17':'13'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;display:block">${total>0?total.toFixed(2)+' €':''}</span>
+          <span id="total-${i}" style="font-size:${(hasDiscount||qty>1)?'18':'15'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;display:block;letter-spacing:-0.3px">${total>0?total.toFixed(2)+' €':''}</span>
         </div>
       </div>
     </div>
