@@ -393,7 +393,7 @@ function parseTicketText(text){
     const standalone=t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
     if(standalone){ time=`${standalone[1].padStart(2,'0')}:${standalone[2]}`; break; }
     // Hora en la misma línea que la fecha: "13/04/2026 09:45" o "22 05 2026 20:47"
-    const inline=t.match(/\d{2,4}\s+(\d{1,2}):(\d{2})(?::\d{2})?/)||t.match(/\d{2,4}[\/\-]\s*\d{2,4}\s+(\d{1,2}):(\d{2})/);
+    const inline=t.match(/\d{2,4}\s+(\d{1,2}):(\d{2})(?::\d{2})?/)||t.match(/\d{2,4}[\/\-]\s*\d{2,4}\s+(\d{1,2}):(\d{2})/)||t.match(/[-–]\s*(\d{1,2}):(\d{2})(?::\d{2})?$/);
     if(inline){ time=`${inline[1].padStart(2,'0')}:${inline[2]}`; break; }
   }
   // Segunda pasada: fecha y hora inline si no se encontró standalone
@@ -427,7 +427,7 @@ function parseTicketText(text){
   let total=0;
   // Prioridad 1: IMPORTE / IMP. (línea más fiable)
   for(const l of lines){
-    const m=l.match(/imp(?:orte)?[\s.]*(?:eur[\s.]*)?[.:]\s*(\d{1,4}[.,]\d{2})/i)||l.match(/importe:\s*(\d{1,4}[.,]\d{2})\s*[€]/i);
+    const m=l.match(/imp(?:orte)?[\s./]*(?:eur[\s.]*)?[.:/]\s*(\d{1,4}[.,]\d{2})/i)||l.match(/(\d{1,4}[.,]\d{2})\s*\/\s*eur/i);
     if(m){const v=parseFloat(m[1].replace(',','.'));if(v>0){total=v;break;}}
   }
   // Prioridad 2: *Total: o ART.TOTAL con precio inline o en línea siguiente
@@ -728,12 +728,12 @@ function parseTicketText(text){
       if(qm&&parseInt(qm[1])>1) orphanQty=parseInt(qm[1]);
       if(/factura\s+simplificada/i.test(t)){start=i+1;break;}
     }
-    // Fin: TOT, TARJETA BANCARIA, NUM. TOTAL, €*
+    // Fin: TOT, €*, € TARJETA, NUM. TOTAL
     let end_=allLines.length;
     for(let i=start;i<allLines.length;i++){
       const t=allLines[i].trim();
       if(/^(tarjeta\s+bancaria|num\.\s*total|cambio|para\s+el\s+cliente)/i.test(t)){end_=i;break;}
-      if(/^€\*/.test(t)){end_=i;break;}
+      if(/^€[\s*]/.test(t)){end_=i;break;}  // €* or € TARJETA
       if(/^tot$/i.test(t)){
         // Include prices that come AFTER TOT before cutting
         // (iPhone OCR sometimes puts last prices after TOT)
@@ -744,7 +744,8 @@ function parseTicketText(text){
     const afterTOTprices=[];
     for(let i=end_;i<Math.min(end_+6,allLines.length);i++){
       const t=allLines[i].trim();
-      if(!t||/^(tot$|€\*|tarjeta|cambio|num\.|para\s+el)/i.test(t)) continue;
+      if(!t||/^(tot$|€[\s*]|tarjeta|cambio|num\.|para\s+el|\.|venta)/i.test(t)) continue;
+      const dirtyM=t.match(/^(\d{1,3}[.,]\d{2})\s+\w/);if(dirtyM){const p=parseAlcampoPrice(dirtyM[1]);if(p>0&&p<20)afterTOTprices.push(p);continue;}
       if(/^(tarjeta bancaria|num\.\s*total)/i.test(t)) break;
       if(isAlcampoPrice(t)){
         const p=parseAlcampoPrice(t);
@@ -1968,11 +1969,8 @@ function renderProductRow(prod,i){
           <button onclick="changeQty(${i},-1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
           <span id="qty-${i}" style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty}×</span>
           <button onclick="changeQty(${i},1)" style="width:22px;height:22px;border-radius:50%;background:var(--bg4);color:var(--txt1);font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center">+</button>
-          ${hasDiscount
-            ?`<span style="font-size:10px;color:var(--txt3);text-decoration:line-through;display:block;text-align:right">${(unitPrice*qty).toFixed(2)} €</span>`
-            :qty>1?`<span style="font-size:10px;color:var(--txt3);display:block;text-align:right">${unitPrice.toFixed(2)} €/u</span>`
-            :''}
-          <span id="total-${i}" style="font-size:${(hasDiscount||qty>1)?'18':'15'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;display:block;letter-spacing:-0.3px">${total>0?total.toFixed(2)+' €':''}</span>
+          ${(hasDiscount||qty>1)?`<span style="font-size:10px;color:var(--txt3);${hasDiscount?'text-decoration:line-through;':''} display:block;text-align:right">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
+          <span id="total-${i}" style="font-size:18px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;display:block;letter-spacing:-0.3px">${total>0?total.toFixed(2)+' €':''}</span>
         </div>
       </div>
     </div>
