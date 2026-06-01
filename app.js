@@ -327,7 +327,7 @@ async function googleVisionExtract(b64){
 function parseTicketText(text){
   const rawLines=text.split('\n').map(l=>l.trim());
   // Filtrar líneas completamente vacías pero conservar el orden
-  const lines=rawLines.filter(l=>l.length>0);
+  const lines=rawLines.filter(l=>l.length>0&&!/[\u{1F300}-\u{1FFFF}\u{2600}-\u{27FF}\u2B50\u26AA\u26AB\u25CF]/u.test(l));
 
   // ── Regexes globales ──────────────────────────────────────────
   const PRICE_RX    = /^(\d{1,3}[.,]\d{2})\s*[)€>]?\s*$/;         // línea que es solo un precio
@@ -1309,6 +1309,10 @@ function parseTicketText(text){
       if(/^-\d{1,3}[.,]\d{2}$/.test(l)) return false;
       if(isKgInfo(l)||WEIGHT_RX.test(l)||MULT_RX.test(l)) return false;
       if(/^\d+g\s*[\(\d]/i.test(l)) return false;
+      // Filter emoji/signal garbage lines like "⚫all 4G"
+      if(/[\u{1F300}-\u{1FFFF}\u{2600}-\u{27FF}\u{1F000}-\u{1FFFF}]/u.test(l)) return false;
+      if(/^[^\x00-\x7F\u00C0-\u024F]/.test(l)) return false; // starts with non-Latin char
+      if(/^-\d{1,3}[.,]\d{2}$/.test(l)) return false; // negative price
       return true;
     }
 
@@ -2028,8 +2032,8 @@ function renderProductRow(prod,i){
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty>1?qty+'×':''}</span>
-            ${(hasDiscount||qty>1)?`<span style="font-size:12px;color:var(--txt3);opacity:0.3;${hasDiscount?'text-decoration:line-through;':''}">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
-            <span style="font-size:${(hasDiscount||qty>1)?'19':'16'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;letter-spacing:-0.3px">${total>0?total.toFixed(2)+' €':''}</span>
+            ${(hasDiscount||qty>1)?`<span style="font-size:13px;color:var(--txt3);opacity:0.3;${hasDiscount?'text-decoration:line-through;':''}">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
+            <span style="font-size:${(hasDiscount||qty>1)?'22':'18'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:42px;text-align:right;letter-spacing:-0.5px">${total>0?total.toFixed(2)+' €':''}</span>
           </div>
         </div>
       </div>
