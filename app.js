@@ -1319,7 +1319,9 @@ function parseTicketText(text){
         }
       }
 
-      if(/^desc\.?$/i.test(l)||/^promo\s+lidl/i.test(l)){
+      // PROMO LIDL PLUS is a label, not a Desc. marker — ignore it
+      if(/^promo\s+lidl/i.test(l)) continue;
+      if(/^desc\.?$/i.test(l)){
         // Desc. → marca el nombre más reciente O el siguiente
         // Buscamos hacia atrás el último entry sin hasDiscount ya marcado
         // y hacia adelante si el siguiente es un nombre
@@ -1423,9 +1425,12 @@ function parseTicketText(text){
         negAmounts.push(parseFloat(m[1].replace(',','.')));
       }
     }
-    discEntries.forEach((k,j)=>{
-      const disc=negAmounts[j];
-      const prod=out[k];
+    // Assign negatives to Desc.-marked entries in order
+    // Extra negatives (more than Desc. entries) go to the last Desc. entry
+    const lastDescK = discEntries.length > 0 ? discEntries[discEntries.length-1] : -1;
+    negAmounts.forEach((disc, j) => {
+      const k = j < discEntries.length ? discEntries[j] : lastDescK;
+      const prod = k >= 0 ? out[k] : null;
       if(!prod||!disc) return;
       prod.discount=(prod.discount||0)+disc;
       prod.finalPrice=parseFloat(Math.max(0,prod.finalPrice-disc).toFixed(2));
