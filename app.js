@@ -625,9 +625,15 @@ function parseTicketText(text){
     }
     // Build body: names before header (split-header format) + lines after header
     let descIdx=-1;
-    for(let _i=0;_i<allLines.length;_i++) if(/^descripci[oó]n$/i.test(allLines[_i].trim())){descIdx=_i;break;}
-    const preHeaderLines=(descIdx>=0&&descIdx<start)?allLines.slice(descIdx+1,start).map(l=>l.trim()).filter(l=>l):[];
-    const body=[...preHeaderLines,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l)];
+    let pUnitIdx=-1;
+    for(let _i=0;_i<allLines.length;_i++){
+      if(/^descripci[oó]n$/i.test(allLines[_i].trim())) descIdx=_i;
+      if(/^p\.\s*unit/i.test(allLines[_i].trim())){pUnitIdx=_i;break;}
+    }
+    // preHeaderLines = names between Descripción and P. Unit (exclude P. Unit and Importe)
+    const preEnd = pUnitIdx>=0 ? pUnitIdx : start;
+    const preHeaderLines=(descIdx>=0&&descIdx<preEnd)?allLines.slice(descIdx+1,preEnd).map(l=>l.trim()).filter(l=>l&&!/^(p\.\s*unit|imp(orte)?)/i.test(l)):[];
+    const body=[...preHeaderLines,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l&&!/^(p\.\s*unit|imp(orte)?|importe:)/i.test(l))];
 
     // Pre-process body: expand inline "N NOMBRE PRECIO" lines into (entry, price) pairs
     // so they appear in correct position. Build a unified entries[] and allPrices[] together.
@@ -2032,7 +2038,7 @@ function renderProductRow(prod,i){
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty>1?qty+'×':''}</span>
-            ${(hasDiscount||qty>1)?`<span style="font-size:13px;color:var(--txt3);opacity:0.3;${hasDiscount?'text-decoration:line-through;':''}">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
+            ${(hasDiscount||qty>1)?`<span style="font-size:14px;color:var(--txt3);opacity:0.45;${hasDiscount?'text-decoration:line-through;':''}">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
             <span style="font-size:${(hasDiscount||qty>1)?'22':'18'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:42px;text-align:right;letter-spacing:-0.5px">${total>0?total.toFixed(2)+' €':''}</span>
           </div>
         </div>
