@@ -1074,7 +1074,10 @@ function parseTicketText(text){
         if(out.length>0){
           // Check if prev line was a category code — if so, apply discount to cheapest
           // product with that code in the last 4 products
-          const prevLine=pLines[i-2]?.trim()||''; // line before the negative price
+          const prevRaw=pLines[i-2]?.trim()||'';
+          // Code may be the entire prevLine OR at the end of "1 3x2 EN EL MÁS BA 4641"
+          const codeAtEnd=prevRaw.match(/\b([A-Z0-9]{2,6})$/);
+          const prevLine=codeAtEnd?codeAtEnd[1]:prevRaw;
           if(ALFA_CODE_RX.test(prevLine)){
             // Find cheapest product tagged with this code in recent products
             const tagged=out.slice(-4).filter(p=>p._code===prevLine);
@@ -2013,11 +2016,8 @@ function renderProductRow(prod,i){
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty>1?qty+'×':''}</span>
-            ${hasDiscount
-              ?`<span style="font-size:10px;color:var(--txt3);opacity:0.3;text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`
-              :qty>1?`<span style="font-size:10px;color:var(--txt3)">${unitPrice.toFixed(2)} €</span>`
-              :''}
-            <span style="font-size:${(hasDiscount||qty>1)?'15':'12'}px;font-weight:700;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
+            ${(hasDiscount||qty>1)?`<span style="font-size:12px;color:var(--txt3);opacity:0.3;${hasDiscount?'text-decoration:line-through;':''}">${hasDiscount?(unitPrice*qty).toFixed(2)+' €':unitPrice.toFixed(2)+' €/u'}</span>`:''}
+            <span style="font-size:${(hasDiscount||qty>1)?'19':'16'}px;font-weight:800;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right;letter-spacing:-0.3px">${total>0?total.toFixed(2)+' €':''}</span>
           </div>
         </div>
       </div>
