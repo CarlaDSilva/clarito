@@ -721,6 +721,8 @@ function parseTicketText(text){
   function parseAlcampo(allLines, out){
     const ALCAMPO_PRICE_RX=/^,?\d{1,3}[.,]\d{2}\s*[ABC]?\s*$/;
     const ALCAMPO_PACK_RX=/^(\d+)\s*[xX]\s*(\d{1,3}[.,]\d{2})$/;
+    // "4 x 92" = qty 4, truncated price (0.92 missing leading "0,")
+    const ALCAMPO_PACK_TRUNC_RX=/^(\d+)\s*[xX]\s*(\d{2,3})$/;
     const QTY_ONLY_RX=/^(\d+)\s*[xX]\s*$/; // "4 x" sin precio — qty del siguiente producto
     const ALCAMPO_SKIP_RX=/^(factura|simplificada|tarjeta|cambio|num\.|base|cuota|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campa|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*)/i;
     const NOISE_RX=/^([ABC]$|92$|€\*$|tot$|esp$|\d{2}$|\d+\s*[xX]\s*$)/i; // incl. '4 x'
@@ -754,11 +756,18 @@ function parseTicketText(text){
 
     // Encontrar inicio después de FACTURA SIMPLIFICADA
     // Also capture any "N x" line before the body as orphan qty
-    let start=0, orphanQty=null;
+    let start=0, orphanQty=null, orphanUnitPrice=null;
     for(let i=0;i<allLines.length;i++){
       const t=allLines[i].trim();
       const qm=t.match(/^(\d+)\s*[xX]\s*$/);
       if(qm&&parseInt(qm[1])>1) orphanQty=parseInt(qm[1]);
+      // "4 x 92" = qty 4, truncated price 0.92 (missing leading "0,")
+      const qmPrice=t.match(/^(\d+)\s*[xX]\s*(\d{2,3})$/);
+      if(qmPrice){
+        orphanQty=parseInt(qmPrice[1]);
+        // Store truncated unit price for later verification
+        orphanUnitPrice=parseFloat('0.'+qmPrice[2]);
+      }
       if(/factura\s+simplificada/i.test(t)){start=i+1;break;}
     }
     // Fin: TOT, €*, € TARJETA, NUM. TOTAL
@@ -803,6 +812,14 @@ function parseTicketText(text){
       if(qtyOnlyM){pendingQty=parseInt(qtyOnlyM[1]);continue;}
       const packM=l.match(ALCAMPO_PACK_RX);
       if(packM){tokens.push({type:'pack',qty:parseInt(packM[1]),unitP:parseFloat(packM[2].replace(',','.'))});continue;}
+      // "4 x 92" = qty 4, truncated unit price 0.92
+      const packTruncM=l.match(ALCAMPO_PACK_TRUNC_RX);
+      if(packTruncM){
+        const qty=parseInt(packTruncM[1]);
+        const unitP=parseFloat('0.'+packTruncM[2]);
+        tokens.push({type:'pack',qty,unitP});
+        continue;
+      }
       if(isAlcampoName(l)){
         tokens.push({type:'name',val:l,qty:pendingQty||1});
         pendingQty=null; continue;
@@ -829,12 +846,23 @@ function parseTicketText(text){
 
         if(nameRun>1&&priceRun>=nameRun){
           // Column block: pair names[i] with prices[i] in order
+          // First pass: build entries with prices
+          const blockEntries=[];
           for(let n=0;n<nameRun;n++){
             const nt=tokens[j+n];
-            const entry={name:nt.val,qty:nt.qty,unitP:null,price:tokens[k+n]?.val??null,raw:nt.val};
-            if(pendingPack&&n===0){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}
-            entries.push(entry);
+            const price=tokens[k+n]?.val??null;
+            blockEntries.push({name:nt.val,qty:nt.qty,unitP:null,price,raw:nt.val});
           }
+          // Apply pendingPack to the entry whose price matches qty×unitP
+          if(pendingPack){
+            const expectedTotal=parseFloat((pendingPack.qty*pendingPack.unitP).toFixed(2));
+            const matchIdx=blockEntries.findIndex(e=>e.price!=null&&Math.abs(e.price-expectedTotal)<0.05);
+            const applyIdx=matchIdx>=0?matchIdx:0;
+            blockEntries[applyIdx].qty=pendingPack.qty;
+            blockEntries[applyIdx].unitP=pendingPack.unitP;
+            pendingPack=null;
+          }
+          blockEntries.forEach(e=>entries.push(e));
           j=k+nameRun;
           // Also skip total-of-line prices (price that equals unit×qty)
           while(j<tokens.length&&tokens[j].type==='price'){
