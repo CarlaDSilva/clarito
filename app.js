@@ -372,7 +372,9 @@ function parseTicketText(text){
   // ── Detectar formato ─────────────────────────────────────────
   // Carrefour: tiene bloques "N x (" en el texto
   const isCarrefour = store.toLowerCase().includes('carrefour') ||
-    lines.some(l=>QTY_OPEN_RX.test(l));
+    lines.some(l=>QTY_OPEN_RX.test(l)||/A28425270/.test(l));
+  // Set store name from CIF if not detected
+  if(!store&&isCarrefour) store='Carrefour';
   const isFroiz = store.toLowerCase().includes('froiz') ||
     lines.some(l=>/distribuciones froiz/i.test(l));
   // Renombrar Alcampo → Auchan
@@ -2012,7 +2014,7 @@ function renderProductRow(prod,i){
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:12px;color:var(--txt2);min-width:20px;text-align:center">${qty>1?qty+'×':''}</span>
             ${hasDiscount
-              ?`<span style="font-size:10px;color:var(--txt3);opacity:0.55;text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`
+              ?`<span style="font-size:10px;color:var(--txt3);opacity:0.3;text-decoration:line-through">${(unitPrice*qty).toFixed(2)} €</span>`
               :qty>1?`<span style="font-size:10px;color:var(--txt3)">${unitPrice.toFixed(2)} €</span>`
               :''}
             <span style="font-size:${(hasDiscount||qty>1)?'15':'12'}px;font-weight:700;color:${hasDiscount?'var(--green)':'var(--txt0)'};min-width:38px;text-align:right">${total>0?total.toFixed(2)+' €':''}</span>
