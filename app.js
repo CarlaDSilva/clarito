@@ -382,8 +382,8 @@ function parseTicketText(text){
   const isAlcampo = store==='Auchan' || lines.some(l=>/alcampo/i.test(l)||/auchan/i.test(l));
   // Mercadona digital: tiene cabecera "Descripción" + "P. Unit" en líneas consecutivas
   const isMercadonaDigital = (store.toLowerCase().includes('mercadona')||lines.some(l=>/mercadona/i.test(l))) &&
-    lines.some((l,i)=>(/descripci[oó]n/i.test(l)&&i+1<lines.length&&/p\.\s*unit/i.test(lines[i+1]))||
-                       /descripci[oó]n.*p\.\s*unit/i.test(l));
+    lines.some(l=>/descripci[oó]n/i.test(l)) &&
+    lines.some(l=>/p\.\s*unit/i.test(l));
 
   // ── Detectar fecha y hora ─────────────────────────────────────
   let date=null, time=null;
@@ -583,14 +583,18 @@ function parseTicketText(text){
     for(let i=0;i<allLines.length;i++){
       // Same line: "Descripción P. Unit Importe"
       if(/descripci[oó]n/i.test(allLines[i])&&/p\.\s*unit/i.test(allLines[i])){start=i+1;break;}
-      // Next line is "P. Unit ..." (may also contain Imp/Importe on same line)
+      // "P. Unit" found — start is the line after it (whether Descripción was before or far above)
+      if(/^p\.\s*unit/i.test(allLines[i].trim())){
+        const afterPUnit=allLines[i+1]?.trim()||'';
+        const isImporte=/^imp(orte)?/i.test(afterPUnit);
+        start=isImporte?i+2:i+1; break;
+      }
+      // Next line is "P. Unit"
       if(/descripci[oó]n/i.test(allLines[i])&&i+1<allLines.length&&/p\.\s*unit/i.test(allLines[i+1])){
-        // Check if the line after P.Unit is "Importe" (separate) or already a product
         const afterPUnit=allLines[i+2]?.trim()||'';
         const isImporte=/^imp(orte)?/i.test(afterPUnit);
         start=isImporte?i+3:i+2; break;
       }
-      if(/p\.\s*unit/i.test(allLines[i])&&i>0&&/descripci[oó]n/i.test(allLines[i-1])){start=i+2;break;}
     }
     // Cortar en TOTAL, collecting orphan prices that follow
     let end_=allLines.length;
@@ -606,14 +610,16 @@ function parseTicketText(text){
           if(/^(importe:|tarj\.?\s*bancaria:|iva\b)/i.test(pt)) break; // stop at payment section
           if(/^tarjeta bancaria$/i.test(pt)) continue; // skip this line but keep going
           const pm=pt.match(/^(\d{1,3}[.,]\d{2})$/);
-          if(pm){const v=parseFloat(pm[1].replace(',','.'));if(v>0&&v<20)afterTotalPrices.push(v);}
+          if(pm){const v=parseFloat(pm[1].replace(',','.'));if(v>0&&v<100)afterTotalPrices.push(v);} // up to 100€ per product
         }
         break;
       }
     }
-    const body=allLines.slice(start,end_);
-
-
+    // Build body: names before header (split-header format) + lines after header
+    let descIdx=-1;
+    for(let _i=0;_i<allLines.length;_i++) if(/^descripci[oó]n$/i.test(allLines[_i].trim())){descIdx=_i;break;}
+    const preHeaderLines=(descIdx>=0&&descIdx<start)?allLines.slice(descIdx+1,start).map(l=>l.trim()).filter(l=>l):[];
+    const body=[...preHeaderLines,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l)];
 
     // Pre-process body: expand inline "N NOMBRE PRECIO" lines into (entry, price) pairs
     // so they appear in correct position. Build a unified entries[] and allPrices[] together.
@@ -651,7 +657,7 @@ function parseTicketText(text){
       const m=t.match(QTY_NAME_RX);
       if(m){entries.push({name:m[2].trim(),qty:parseInt(m[1]),raw:t});continue;}
       if(/^[A-ZÁÉÍÓÚÑ]/.test(t)&&t.length>=3&&!isPrice(t)&&
-         !/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n|uf\ |jati|шп|siso|utillos)/i.test(t)&&
+         !/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n|p\.\s*unit|uf\ |jati|шп|siso|utillos)/i.test(t)&&
          !/^[a-záéíóúñ]{2,}\s+[a-z]/i.test(t)){
         entries.push({name:t,qty:1,raw:t});
       }
@@ -767,7 +773,11 @@ function parseTicketText(text){
       }
     }
 
-    const body=allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l);
+    // Also include lines between Descripción and P. Unit (names-before-header format)
+    let descIdx=-1;
+    for(let i=0;i<allLines.length;i++) if(/^descripci[oó]n$/i.test(allLines[i].trim())){descIdx=i;break;}
+    const preHeaderLines = (descIdx>=0&&descIdx<start) ? allLines.slice(descIdx+1,start).map(l=>l.trim()).filter(l=>l) : [];
+    const body=[...preHeaderLines,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l)];
 
     // Recoger tokens
     const tokens=[];
@@ -2422,7 +2432,7 @@ function confirmSettle(){
   // Also save settled IDs separately as backup
   const settledIds=DB.tickets.filter(t=>t.settled).map(t=>t.id);
   S.set('settledTicketIds',settledIds);
-  saveDB();closeModal();showToast('¡Todo Clarito!',3000);currentScreen='balance';renderBalance();
+  saveDB();closeModal();showToast('Todo está Clarito',3000);currentScreen='balance';renderBalance();
 }
 
 // ── STATS ──────────────────────────────────────────────────────
