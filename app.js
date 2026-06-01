@@ -366,7 +366,10 @@ function parseTicketText(text){
     const low=l.toLowerCase();
     const found=STORES.find(s=>low.includes(s));
     if(found){store=found.charAt(0).toUpperCase()+found.slice(1);break;}
-    if(!store&&l.length>3&&l.length<35&&/^[A-ZÁÉÍÓÚÑ\s]+$/.test(l)&&!isSkip(l)) store=l;
+    // Only accept as store if it looks like a business name (2+ words, or known pattern)
+    if(!store&&l.length>3&&l.length<35&&/^[A-ZÁÉÍÓÚÑ\s]+$/.test(l)&&!isSkip(l)&&
+       !/^(nif|cif|telf|iva|total|base|cuota)/i.test(l)&&
+       l.trim().includes(' ')) store=l; // must have a space (2+ words)
   }
 
   // ── Detectar formato ─────────────────────────────────────────
@@ -507,6 +510,9 @@ function parseTicketText(text){
   // En Lidl columnas los precios B/A vienen DESPUÉS de TOTAL — no cortar en TOTAL
   // Detectar Lidl columnas inline (sin usar LIDL_PRICE_RX que aún no está declarado)
   const _lidlPriceRx=/^\d{1,3}[.,]\d{2}\s*[A-Z]\s*$/;
+  // Set store from NIF if not yet detected
+  if(!store&&lines.some(l=>/A60195278/i.test(l))) store='Lidl';
+  if(!store&&lines.some(l=>/A28425270/.test(l))) store='Carrefour';
   const isLidlColumnFormat=(()=>{
     let totIdx=-1;
     for(let li=0;li<lines.length;li++) if(/^total$/i.test(lines[li].trim())){totIdx=li;break;}
@@ -1334,8 +1340,14 @@ function parseTicketText(text){
         }
       }
 
-      // PROMO LIDL PLUS is a label, not a Desc. marker — ignore it
-      if(/^promo\s+lidl/i.test(l)) continue;
+      // PROMO LIDL PLUS marks the PREVIOUS entry as having a discount (like Desc. after price)
+      if(/^promo\s+lidl/i.test(l)){
+        // Mark the most recent entry that doesn't already have hasDiscount
+        for(let k=entries.length-1;k>=Math.max(0,entries.length-3);k--){
+          if(!entries[k].hasDiscount){entries[k].hasDiscount=true;break;}
+        }
+        continue;
+      }
       if(/^desc\.?$/i.test(l)){
         // Desc. → marca el nombre más reciente O el siguiente
         // Buscamos hacia atrás el último entry sin hasDiscount ya marcado
@@ -2037,7 +2049,7 @@ function renderProductRow(prod,i){
             value="${unitDisplay}"
             placeholder="0,00"
             inputmode="decimal"
-            style="width:64px;color:${(hasDiscount||qty>1)?'var(--txt3)':'var(--txt0)'};font-size:${(hasDiscount||qty>1)?'11':'13'}px"
+            style="width:64px;color:var(--txt3);opacity:0.35;font-size:13px"
             onfocus="if(this.value==='0.00'||this.value==='0,00')this.value=''"
             onblur="if(!this.value)this.value='0.00';updateUnitPrice(${i},this.value)"
             oninput="updateUnitPrice(${i},this.value)"/>
@@ -2252,8 +2264,11 @@ function saveTicket(){
     t.createdAt=t.createdAt||new Date().toISOString().slice(0,10);
     if(!t.total||t.total===0) t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);
     learnFromTicket(t);
+    // Strip large non-persistent fields before saving
+    const tToSave={...t};
+    delete tToSave._imageB64;
     const idx=DB.tickets.findIndex(x=>x.id===t.id);
-    if(idx>=0) DB.tickets[idx]=t; else DB.tickets.push(t);
+    if(idx>=0) DB.tickets[idx]=tToSave; else DB.tickets.push(tToSave);
     saveDB();
   }finally{
     window._savingTicket=false;
