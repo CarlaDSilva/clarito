@@ -265,7 +265,7 @@ function parseTicketText(text){
 
   // ── FROIZ ─────────────────────────────────────────────────────
   function parseFroiz(allLines,out){
-    const FCRX=/^\d{5,}\.?\s*\d*$/;
+    const FCRX=/^\d{4,}[-.]?\s*\d*$/;
     const FCUTRX=/^(\*?total\b|entrega:|tarjetas:|a\s+devolver|base\s+c\.iva)/i;
     const PDRX=/^\d{1,3}[.,]\d{2}$/;
     function fp(t){const m=t.match(/^(\d{1,3}[.,]\d{2})/);return m?parseFloat(m[1].replace(',','.')):null;}
