@@ -769,11 +769,52 @@ function renderStats(){
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
 function renderInventorySection(){
   const preds=getPredictions();
-  if(!preds.length)return`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;
+  const archived=DB.knowledge?.archivedDespensa||[];
   const bought=new Set(DB.knowledge?.boughtDespensa||[]);
-  // Agrupar por supermercado
+
+  const activeSection=preds.length===0
+    ?`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`
+    :buildInventoryRows(preds.slice(0,50), bought);
+
+  // Sección de archivados
+  let archivedSection='';
+  if(archived.length>0){
+    const archivedRows=archived.map(key=>{
+      const name=DB.knowledge?.archivedNames?.[key]||key;
+      return`<div class="inv-row inv-archived-row">
+        <div class="inv-name">${name}</div>
+        <div style="flex:1"></div>
+        <button class="inv-restore-btn" data-key="${key}" title="Restaurar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+          Restaurar
+        </button>
+      </div>`;
+    }).join('');
+    archivedSection=`
+      <details class="inv-archived-details">
+        <summary class="inv-archived-summary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          Archivados (${archived.length})
+        </summary>
+        <div class="inv-archived-list">${archivedRows}</div>
+      </details>`;
+  }
+
+  setTimeout(()=>{
+    document.querySelectorAll('.inv-archive-btn').forEach(btn=>{
+      btn.onclick=()=>archiveDespensa(btn.dataset.key, btn.dataset.name);
+    });
+    document.querySelectorAll('.inv-restore-btn').forEach(btn=>{
+      btn.onclick=()=>restoreDespensa(btn.dataset.key);
+    });
+  },0);
+
+  return activeSection+archivedSection;
+}
+
+function buildInventoryRows(preds, bought){
   const byStore={};
-  preds.slice(0,50).forEach(p=>{
+  preds.forEach(p=>{
     const s=p.store||'Sin supermercado';
     if(!byStore[s]) byStore[s]=[];
     byStore[s].push(p);
@@ -790,7 +831,13 @@ function renderInventorySection(){
         <div class="inv-name">${p.name}</div>
         <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div>
         <div class="inv-days">~${p.days}d</div>
-        <button class="inv-archive-btn" data-key="${key}" title="Archivar">−</button>
+        <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar de la lista">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
       </div>`;
     }).join('')}
   `).join('');
@@ -801,14 +848,23 @@ function toggleBoughtDespensa(key,checked){
   if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
   else{DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);}
   saveDB();
-  // Update row style without full re-render
   const row=document.querySelector(`.inv-check[data-key="${key}"]`)?.closest('.inv-row');
   if(row) row.classList.toggle('inv-bought',checked);
 }
-function archiveDespensa(key){
+function archiveDespensa(key,name){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.knowledge.archivedDespensa) DB.knowledge.archivedDespensa=[];
-  if(!DB.knowledge.archivedDespensa.includes(key)) DB.knowledge.archivedDespensa.push(key);
+  if(!DB.knowledge.archivedNames) DB.knowledge.archivedNames={};
+  if(!DB.knowledge.archivedDespensa.includes(key)){
+    DB.knowledge.archivedDespensa.push(key);
+    if(name) DB.knowledge.archivedNames[key]=name;
+  }
+  saveDB();renderStats();
+}
+function restoreDespensa(key){
+  if(!DB.knowledge?.archivedDespensa) return;
+  DB.knowledge.archivedDespensa=DB.knowledge.archivedDespensa.filter(k=>k!==key);
+  if(DB.knowledge.archivedNames) delete DB.knowledge.archivedNames[key];
   saveDB();renderStats();
 }
 function getPredictions(){
