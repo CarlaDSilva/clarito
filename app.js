@@ -263,24 +263,101 @@ function parseTicketText(text){
     if(orphanQty&&orphanQty>1){let bestIdx=-1,bestScore=Infinity;for(let k=0;k<out.length;k++){if(out[k].qty!==1)continue;const ug=Math.round(out[k].finalPrice/orphanQty*100)/100;const diff=Math.abs(ug*orphanQty-out[k].finalPrice);if(diff<0.02&&ug>0&&diff<bestScore){bestScore=diff;bestIdx=k;}}if(bestIdx>=0){const p=out[bestIdx];const unitP=Math.round(p.finalPrice/orphanQty*100)/100;p.qty=orphanQty;p.unitPrice=unitP;p.price=unitP;}}
   }
 
-  // ── FROIZ ─────────────────────────────────────────────────────
+  // ── FROIZ / GADIS ─────────────────────────────────────────────
   function parseFroiz(allLines,out){
     const FCRX=/^\d{4,}[-.]?\s*\d*$/;
     const FCUTRX=/^(\*?total\b|entrega:|tarjetas:|a\s+devolver|base\s+c\.iva)/i;
     const PDRX=/^\d{1,3}[.,]\d{2}$/;
     function fp(t){const m=t.match(/^(\d{1,3}[.,]\d{2})/);return m?parseFloat(m[1].replace(',','.')):null;}
     function iFP(t){return PDRX.test(t);}
-    let hEnd=0;for(let i=0;i<allLines.length;i++){const l=allLines[i].trim();if(/^descripcion\b/i.test(l)){hEnd=i+1;break;}if(/^nif\b|^cif\b/i.test(l))hEnd=i+1;}
-    let docEnd=allLines.length;for(let i=hEnd;i<allLines.length;i++){if(FCUTRX.test(allLines[i].trim())){docEnd=i;break;}}
+    // Avanzar hEnd más allá de cabecera (NIF/CIF) Y líneas de tienda/fecha/caja
+    let hEnd=0;
+    for(let i=0;i<allLines.length;i++){
+      const l=allLines[i].trim();
+      if(/^descripcion\b/i.test(l)){hEnd=i+1;break;}
+      if(/^nif\b|^cif\b/i.test(l)) hEnd=i+1;
+    }
+    // Saltar líneas de cabecera residuales (TIENDA:, CJR:, N.FRA:, fechas, teléfonos)
+    while(hEnd<allLines.length){
+      const l=allLines[hEnd].trim();
+      if(/^(tienda:|cjr:|n\.fra:|n\.oper|fecha|hora|atendid|conserv)/i.test(l)) {hEnd++;continue;}
+      if(/^\d{1,2}[\/\-]\d{2}[\/\-]\d{2,4}/.test(l)||/^\d{2}\s+\d{2}\s+\d{4}/.test(l)){hEnd++;continue;}
+      if(/^\*{2,}/.test(l)||/^\d{9,}$/.test(l)){hEnd++;continue;}
+      break;
+    }
+    let docEnd=allLines.length;
+    for(let i=hEnd;i<allLines.length;i++){if(FCUTRX.test(allLines[i].trim())){docEnd=i;break;}}
     const body=allLines.slice(hEnd,docEnd);
-    function iFN(l){if(!l||l.length<3)return false;if(FCRX.test(l)||iFP(l))return false;if(/^\d+$/.test(l)||/^\d+%$/.test(l))return false;if(/^\[[\d\s]*\]$/.test(l))return false; // OCR garbage like [0]
-      if(/^importe$/i.test(l))return false;if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))return false;if(/^(nif|cif|factura|simplificada|descripcion|cant|p\.v\.p)/i.test(l))return false;return true;}
-    const names=body.filter(l=>iFN(l.trim()));const fni=body.findIndex(l=>iFN(l.trim()));const ii=body.findIndex(l=>/^importe$/i.test(l.trim()));const iH=ii>=0&&ii<fni;
+    function iFN(l){
+      if(!l||l.length<3)return false;
+      if(FCRX.test(l)||iFP(l))return false;
+      if(/^\d+$/.test(l)||/^\d+%$/.test(l))return false;
+      if(/^\[[\d\s]*\]$/.test(l))return false;
+      if(/^importe$/i.test(l))return false;
+      if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))return false;
+      if(/^(nif|cif|factura|simplificada|descripcion|cant|p\.v\.p|tienda:|cjr:|n\.fra:)/i.test(l))return false;
+      if(/^\d{1,2}[\/\-]\d{2}[\/\-]\d{2,4}/.test(l))return false;
+      return true;
+    }
+    const names=body.filter(l=>iFN(l.trim()));
+    const fni=body.findIndex(l=>iFN(l.trim()));
+    const ii=body.findIndex(l=>/^importe$/i.test(l.trim()));
+    const iH=ii>=0&&ii<fni;
     const prices=[];
-    if(!iH){const uP=[],ivP=[];let pC=false,pI=false;for(const l of body){const t=l.trim();if(/^importe$/i.test(t)){pI=true;pC=false;continue;}if(FCRX.test(t)){pC=true;continue;}if(/^\d+%$/.test(t)||(/^\d+$/.test(t)&&!FCRX.test(t))){pC=false;continue;}if(iFP(t)){const p=fp(t);if(p!=null&&p>0&&p<500){if(pC)uP.push(p);else if(pI)ivP.push(p);}pC=false;}else pC=false;}
-    for(let k=0;k<uP.length;k++){const unitP=uP[k],ivaP=ivP[k];if(ivaP&&unitP>0){const qty=Math.round(ivaP/unitP);if(qty>1&&qty<=50&&Math.abs(qty*unitP-ivaP)<0.02)prices.push({unitP,qty});else prices.push({unitP,qty:1});}else prices.push({unitP,qty:1});}}
-    else{const aP=[];for(const l of body){const t=l.trim();if(/^\d+%$/.test(t))continue;if(iFP(t)){const p=fp(t);if(p!=null&&p>0&&p<500)aP.push(p);}}let ai=0;while(ai<aP.length&&prices.length<names.length){const cur=aP[ai],nxt=aP[ai+1];if(nxt!==undefined&&nxt!==cur&&nxt>cur){prices.push({unitP:cur,qty:Math.round(nxt/cur)||1});ai+=2;}else if(nxt!==undefined&&nxt===cur){prices.push({unitP:cur,qty:1});ai+=2;}else{prices.push({unitP:cur,qty:1});ai++;}}}
-    for(let k=0;k<names.length;k++){const rawName=names[k].trim().replace(/\s+\d+[.,]?\d*\s*%\s*$/,'').trim();const pe=prices[k];if(!pe)continue;const nm=cleanName(rawName).replace(/\s+\d+\s*u\b/gi,'').replace(/\s+\d+[.,]\d+\s*(kg|g|l|ml|cl)\b/gi,'').replace(/\s+\d+\s*(kg|g|l|ml|cl)\b/gi,'').replace(/\bbrik\s+\d+(\s+\d+)?\b/gi,'brik').replace(/\s+\d+\s*$/,'').trim();if(nm.length<2)continue;out.push(makeProduct(nm,rawName,pe.unitP,pe.qty));}
+    if(!iH){
+      const uP=[],ivP=[];let pC=false,pI=false;
+      for(const l of body){
+        const t=l.trim();
+        if(/^importe$/i.test(t)){pI=true;pC=false;continue;}
+        if(FCRX.test(t)){pC=true;continue;}
+        if(/^\d+%$/.test(t)||(/^\d+$/.test(t)&&!FCRX.test(t))){pC=false;continue;}
+        if(iFP(t)){const p=fp(t);if(p!=null&&p>0&&p<500){if(pC)uP.push(p);else if(pI)ivP.push(p);}pC=false;}
+        else pC=false;
+      }
+      if(uP.length>0){
+        // iPad path: codes found, pair unit+iva prices
+        for(let k=0;k<uP.length;k++){const unitP=uP[k],ivaP=ivP[k];if(ivaP&&unitP>0){const qty=Math.round(ivaP/unitP);if(qty>1&&qty<=50&&Math.abs(qty*unitP-ivaP)<0.02)prices.push({unitP,qty});else prices.push({unitP,qty:1});}else prices.push({unitP,qty:1});}
+      } else {
+        // Interleaved path: NAME / PRICE / NAME / PRICE (Gadis sin códigos)
+        // Emparejar nombres y precios por posición en el body
+        let pi=0;
+        const bodyPrices=body.map(l=>iFP(l.trim())?fp(l.trim()):null);
+        for(let k=0;k<names.length;k++){
+          // Find next price after this name's position in body
+          const namePos=body.findIndex((l,bi)=>bi>=pi&&l.trim()===names[k]);
+          let priceVal=null;
+          for(let bi=namePos+1;bi<body.length;bi++){
+            const p=bodyPrices[bi];
+            if(p!=null){priceVal=p;pi=bi+1;break;}
+            if(iFN(body[bi].trim())) break; // another name → stop
+          }
+          // Check for total=qty*price pattern (next price after priceVal)
+          if(priceVal!=null){
+            const nextPriceIdx=body.findIndex((l,bi)=>bi>=pi&&bodyPrices[bi]!=null);
+            if(nextPriceIdx>=0){
+              const nextP=bodyPrices[nextPriceIdx];
+              if(nextP>priceVal&&nextP<500){
+                const qty=Math.round(nextP/priceVal);
+                if(qty>1&&qty<=50&&Math.abs(qty*priceVal-nextP)<0.02){prices.push({unitP:priceVal,qty});pi=nextPriceIdx+1;continue;}
+              }
+            }
+            prices.push({unitP:priceVal,qty:1});
+          } else {
+            prices.push(null);
+          }
+        }
+      }
+    } else {
+      const aP=[];for(const l of body){const t=l.trim();if(/^\d+%$/.test(t))continue;if(iFP(t)){const p=fp(t);if(p!=null&&p>0&&p<500)aP.push(p);}}
+      let ai=0;while(ai<aP.length&&prices.length<names.length){const cur=aP[ai],nxt=aP[ai+1];if(nxt!==undefined&&nxt!==cur&&nxt>cur){prices.push({unitP:cur,qty:Math.round(nxt/cur)||1});ai+=2;}else if(nxt!==undefined&&nxt===cur){prices.push({unitP:cur,qty:1});ai+=2;}else{prices.push({unitP:cur,qty:1});ai++;}}
+    }
+    for(let k=0;k<names.length;k++){
+      const rawName=names[k].trim().replace(/\s+\d+[.,]?\d*\s*%\s*$/,'').trim();
+      const pe=prices[k];if(!pe)continue;
+      const nm=cleanName(rawName).replace(/\s+\d+\s*u\b/gi,'').replace(/\s+\d+[.,]\d+\s*(kg|g|l|ml|cl)\b/gi,'').replace(/\s+\d+\s*(kg|g|l|ml|cl)\b/gi,'').replace(/\bbrik\s+\d+(\s+\d+)?\b/gi,'brik').replace(/\s+\d+\s*$/,'').trim();
+      if(nm.length<2)continue;
+      out.push(makeProduct(nm,rawName,pe.unitP,pe.qty));
+    }
   }
 
   // ── CARREFOUR ─────────────────────────────────────────────────
@@ -423,8 +500,7 @@ async function processFile(file){
     let ocrText='';
     try{setOCRStatus('Leyendo ticket...');ocrText=await googleVisionExtract(b64);window._lastTicketB64=b64;if(!DB.visionStats)DB.visionStats={calls:0,firstCall:null};DB.visionStats.calls=(DB.visionStats.calls||0)+1;if(!DB.visionStats.firstCall)DB.visionStats.firstCall=new Date().toISOString().slice(0,10);S.set('visionStats',JSON.stringify(DB.visionStats));S.set('lastOCR',ocrText.slice(0,3000));}catch(ocrErr){console.warn('Google Vision falló:',ocrErr.message);setOCRStatus('Vision falló...');}
     let result;
-    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',result.products.length,'productos');
-      if(result.products.length<1&&DB.groqKey){setOCRStatus('Mejorando con IA...');try{const gr=await groqParseText(ocrText);if(gr.products?.length>result.products.length){result.products=gr.products.map(p=>({...p,unitPrice:p.unitPrice||p.price,finalPrice:parseFloat(((p.unitPrice||p.price)*(p.qty||1)).toFixed(2))}));}if(gr.store)result.store=gr.store;if(gr.date)result.date=gr.date;if(gr.time)result.time=gr.time;if(gr.total&&gr.total>0){const gt=typeof gr.total==='string'?parseFloat(gr.total.replace(',','.')):gr.total;if(gt>0)result.total=gt;}if(gr.last4&&!result.last4)result.last4=gr.last4;}catch(ge){console.warn('Groq fallback falló:',ge.message);result.warnings.push('IA no disponible: '+ge.message);}}}
+    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',result.products.length,'productos');}
     else{hideOCRLoading();showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);openTicketEditor(getEmptyTicket());return;}
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
@@ -688,24 +764,46 @@ function renderStats(){
     <div class="recent-label">Despensa estimada</div>${renderInventorySection()}
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
     ${topProds.length||catSorted.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}</details>`:''}`;
+  setTimeout(()=>{document.querySelectorAll('.inv-archive-btn').forEach(btn=>{btn.onclick=()=>archiveDespensa(btn.dataset.key);});},0);
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
 function renderInventorySection(){
   const preds=getPredictions();
   if(!preds.length)return`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;
-  const rows=preds.slice(0,30).map(p=>{
-    const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
-    const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
-    const key=normalizeKey(p.name);
-    return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div><button class="inv-archive-btn" data-key="${key}" title="Archivar">−</button></div>`;
-  }).join('');
-  // Attach event listeners after render via delegation
-  setTimeout(()=>{
-    document.querySelectorAll('.inv-archive-btn').forEach(btn=>{
-      btn.onclick=()=>archiveDespensa(btn.dataset.key);
-    });
-  },0);
-  return rows;
+  const bought=new Set(DB.knowledge?.boughtDespensa||[]);
+  // Agrupar por supermercado
+  const byStore={};
+  preds.slice(0,50).forEach(p=>{
+    const s=p.store||'Sin supermercado';
+    if(!byStore[s]) byStore[s]=[];
+    byStore[s].push(p);
+  });
+  return Object.entries(byStore).map(([storeName,items])=>`
+    <div class="inv-store-label">${storeName}</div>
+    ${items.map(p=>{
+      const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
+      const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
+      const key=normalizeKey(p.name);
+      const isBought=bought.has(key);
+      return`<div class="inv-row ${isBought?'inv-bought':''}">
+        <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)"/>
+        <div class="inv-name">${p.name}</div>
+        <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <div class="inv-days">~${p.days}d</div>
+        <button class="inv-archive-btn" data-key="${key}" title="Archivar">−</button>
+      </div>`;
+    }).join('')}
+  `).join('');
+}
+function toggleBoughtDespensa(key,checked){
+  if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
+  if(!DB.knowledge.boughtDespensa) DB.knowledge.boughtDespensa=[];
+  if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
+  else{DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);}
+  saveDB();
+  // Update row style without full re-render
+  const row=document.querySelector(`.inv-check[data-key="${key}"]`)?.closest('.inv-row');
+  if(row) row.classList.toggle('inv-bought',checked);
 }
 function archiveDespensa(key){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
@@ -724,7 +822,7 @@ function getPredictions(){
       .sort((a,b)=>a.days-b.days);
   }
   const ph={};
-  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[]};ph[k].dates.push(d);});});
+  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[],store:t.store||''};ph[k].dates.push(d);if(t.store&&!ph[k].store)ph[k].store=t.store;});});;
   const now=Date.now();
   return Object.values(ph)
     .filter(v=>v.dates.length>=2)
@@ -737,7 +835,7 @@ function getPredictions(){
       const avgFreq=Math.max(7,gaps.reduce((s,g)=>s+g,0)/gaps.length);
       const daysSince=(now-uniq[uniq.length-1])/864e5;
       const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));
-      return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};
+      return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),store:item.store||'',detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};
     })
     .filter(Boolean)
     .sort((a,b)=>a.days-b.days);
