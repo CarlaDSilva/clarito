@@ -323,9 +323,53 @@ function parseTicketText(text){
     let totalIdx=pLines.findIndex(l=>/^total$/i.test(l.trim()));if(totalIdx<0)totalIdx=pLines.length;
     const nameLines=pLines.slice(startNIF,totalIdx);const afterTotal=pLines.slice(totalIdx);
     const entries=[];let j=0;
-    while(j<nameLines.length){const l=nameLines[j].trim();j++;if(!l||isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))continue;if(/^\d/.test(l))continue;if(/^(ooo|eur$|'|")/i.test(l))continue;if(/calle|avda|plaza|\d{5}/.test(l))continue;if(/s\.a\.u?\.?$|s\.l\.$/i.test(l))continue;if(store&&l.toLowerCase().includes(store.toLowerCase()))continue;if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l))continue;if(/^(\d+\s*u\b|eur\/kg)/i.test(l))continue;if(LIDL_PRICE_RX.test(l)||UNIT_PRICE_X_RX.test(l)||isPrice(l))continue;let kgInfo=null,packUnit=null,packQty=1;if(j<nameLines.length&&MULT_RX.test(nameLines[j].trim())){kgInfo=nameLines[j].trim();j++;if(j<nameLines.length&&/^eur\/kg/i.test(nameLines[j].trim()))j++;}if(j<nameLines.length&&UNIT_PRICE_X_RX.test(nameLines[j].trim())){const m=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);packUnit=m?parseFloat(m[1].replace(',','.')):null;j++;if(j<nameLines.length&&/^\d+$/.test(nameLines[j].trim())){packQty=parseInt(nameLines[j].trim());j++;}}if(j<nameLines.length&&/^\d{1,3}[.,]\d{2}[xX]$/.test(nameLines[j].trim())){const m=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);if(m)packUnit=parseFloat(m[1].replace(',','.'));j++;}entries.push({raw:l,qty:packQty,unitPrice:packUnit,kgInfo});}
-    const prices=[];let inPB=false;for(const l of afterTotal){const t=l.trim();if(LIDL_PRICE_RX.test(t)){const p=parseLidlPrice(t);if(p!=null&&p>0)prices.push(p);inPB=true;}else if(inPB&&isPrice(t))break;}
-    for(let k=0;k<entries.length;k++){const e=entries[k],price=prices[k];if(price==null)continue;const nm=cleanName(e.raw);if(nm.length<2)continue;if(e.kgInfo)out.push(makeProduct(nm,e.raw,price,1));else if(e.unitPrice){const qty=e.qty>1?e.qty:Math.max(1,Math.round(price/e.unitPrice));if(qty>=2&&Math.abs(e.unitPrice*qty-price)<0.02)out.push(makeProduct(nm,e.raw,e.unitPrice,qty));else out.push(makeProduct(nm,e.raw,price,1));}else out.push(makeProduct(nm,e.raw,price,1));}
+    while(j<nameLines.length){
+      const l=nameLines[j].trim();j++;
+      if(!l||isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))continue;
+      if(/^\d/.test(l))continue;
+      if(/^(ooo|eur$|'|")/i.test(l))continue;
+      if(/calle|avda|plaza|\d{5}/.test(l))continue;
+      if(/s\.a\.u?\.?$|s\.l\.$/i.test(l))continue;
+      if(store&&l.toLowerCase().includes(store.toLowerCase()))continue;
+      if(/^(lidl|aldi|dia|mercadona|carrefour)$/i.test(l))continue;
+      if(/^(\d+\s*u\b|eur\/kg)/i.test(l))continue;
+      if(LIDL_PRICE_RX.test(l)||UNIT_PRICE_X_RX.test(l)||isPrice(l))continue;
+      // PROMO LIDL PLUS → descuento en el producto anterior
+      if(/^promo\s+lidl/i.test(l)){if(entries.length>0)entries[entries.length-1].hasDiscount=true;continue;}
+      // Desc. → descuento en el producto anterior (o el siguiente si no hay previo)
+      if(/^desc\.?$/i.test(l)){if(entries.length>0)entries[entries.length-1].hasDiscount=true;continue;}
+      let kgInfo=null,packUnit=null,packQty=1;
+      if(j<nameLines.length&&MULT_RX.test(nameLines[j].trim())){kgInfo=nameLines[j].trim();j++;if(j<nameLines.length&&/^eur\/kg/i.test(nameLines[j].trim()))j++;}
+      if(j<nameLines.length&&UNIT_PRICE_X_RX.test(nameLines[j].trim())){const m=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);packUnit=m?parseFloat(m[1].replace(',','.')):null;j++;if(j<nameLines.length&&/^\d+$/.test(nameLines[j].trim())){packQty=parseInt(nameLines[j].trim());j++;}}
+      if(j<nameLines.length&&/^\d{1,3}[.,]\d{2}[xX]$/.test(nameLines[j].trim())){const m=nameLines[j].trim().match(/^(\d{1,3}[.,]\d{2})/);if(m)packUnit=parseFloat(m[1].replace(',','.'));j++;}
+      entries.push({raw:l,qty:packQty,unitPrice:packUnit,kgInfo,hasDiscount:false});
+    }
+    // Recoger precios y descuentos intercalados del bloque post-Total
+    // Formato: [2,69 A] [-0,80] [0,15 C] ... — el negativo va al precio inmediatamente anterior
+    const pricePairs=[];let inPB=false,curPair=null;
+    for(const l of afterTotal){
+      const t=l.trim();
+      if(LIDL_PRICE_RX.test(t)){
+        if(curPair) pricePairs.push(curPair);
+        curPair={price:parseLidlPrice(t),discount:0};inPB=true;
+      } else if(/^-(\d{1,3}[.,]\d{2})$/.test(t)){
+        const disc=parseFloat(t.replace('-','').replace(',','.'));
+        if(curPair) curPair.discount+=disc;
+      } else if(inPB&&isPrice(t)){
+        if(curPair) pricePairs.push(curPair);curPair=null;break;
+      }
+    }
+    if(curPair) pricePairs.push(curPair);
+    for(let k=0;k<entries.length;k++){
+      const e=entries[k],pp=pricePairs[k];if(!pp)continue;
+      const nm=cleanName(e.raw);if(nm.length<2)continue;
+      let prod;
+      if(e.kgInfo) prod=makeProduct(nm,e.raw,pp.price,1);
+      else if(e.unitPrice){const qty=e.qty>1?e.qty:Math.max(1,Math.round(pp.price/e.unitPrice));if(qty>=2&&Math.abs(e.unitPrice*qty-pp.price)<0.02)prod=makeProduct(nm,e.raw,e.unitPrice,qty);else prod=makeProduct(nm,e.raw,pp.price,1);}
+      else prod=makeProduct(nm,e.raw,pp.price,1);
+      if(pp.discount>0){prod.discount=pp.discount;prod.finalPrice=parseFloat(Math.max(0,prod.finalPrice-pp.discount).toFixed(2));}
+      out.push(prod);
+    }
   }
 
   // ── LIDL INLINE ───────────────────────────────────────────────
@@ -649,12 +693,19 @@ function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.f
 function renderInventorySection(){
   const preds=getPredictions();
   if(!preds.length)return`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;
-  return preds.slice(0,15).map(p=>{
+  const rows=preds.slice(0,30).map(p=>{
     const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
     const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
     const key=normalizeKey(p.name);
-    return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div><button class="inv-archive-btn" onclick="archiveDespensa('${key}')" title="Archivar">−</button></div>`;
+    return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div><button class="inv-archive-btn" data-key="${key}" title="Archivar">−</button></div>`;
   }).join('');
+  // Attach event listeners after render via delegation
+  setTimeout(()=>{
+    document.querySelectorAll('.inv-archive-btn').forEach(btn=>{
+      btn.onclick=()=>archiveDespensa(btn.dataset.key);
+    });
+  },0);
+  return rows;
 }
 function archiveDespensa(key){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
