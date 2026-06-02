@@ -100,7 +100,7 @@ function parseTicketText(text){
   const PROMO_RX=/^(-[A-ZÁÉÍÓÚÑ]|EL\s+CLUB\b|MI\s+DÍA|LLEGA\b|CLUB\b$)/i;
 
   function isPrice(l){return PRICE_RX.test(l);}
-  function isSkip(l){return SKIP_RX.test(l)||PROMO_RX.test(l)||BARCODE_RX.test(l)||SEP_RX.test(l)||WEIGHT_RX.test(l);}
+  function isSkip(l){return SKIP_RX.test(l)||PROMO_RX.test(l)||BARCODE_RX.test(l)||SEP_RX.test(l)||WEIGHT_RX.test(l)||/^\[[\d\s]*\]$/.test(l);}
   function isKgInfo(l){return KG_RX.test(l)&&!PRICE_RX.test(l);}
   function parsePrice(l){return parseFloat(l.replace(/[)€>]/g,'').replace(',','.').trim());}
   function parseLidlPrice(l){const m=l.match(/^(\d{1,3}[.,]\d{2})/);return m?parseFloat(m[1].replace(',','.')):null;}
@@ -119,12 +119,14 @@ function parseTicketText(text){
   // Detectar por CIF
   const isCarrefour=store.toLowerCase().includes('carrefour')||lines.some(l=>QTY_OPEN_RX.test(l)||/A28425270/.test(l));
   if(!store&&isCarrefour) store='Carrefour';
-  const isFroiz=store.toLowerCase().includes('froiz')||lines.some(l=>/distribuciones froiz/i.test(l));
+  const isFroiz=store.toLowerCase().includes('froiz')||store.toLowerCase().includes('gadis')||
+    lines.some(l=>/distribuciones froiz/i.test(l)||/gadis/i.test(l)||/B15705676/.test(l)||/pontevicus/i.test(l));
+  if(!store&&lines.some(l=>/gadis/i.test(l)||/B15705676/.test(l)||/pontevicus/i.test(l))) store='Gadis';
   if(store.toLowerCase().includes('alcampo')||lines.some(l=>/^alcampo/i.test(l.trim()))) store='Auchan';
   const isAlcampo=store==='Auchan'||lines.some(l=>/alcampo/i.test(l)||/auchan/i.test(l));
   if(!store&&lines.some(l=>/A60195278/i.test(l))) store='Lidl';
   if(!store&&lines.some(l=>/A28425270/.test(l))) store='Carrefour';
-  if(!store&&lines.some(l=>/gadis/i.test(l)||/A15022510/.test(l))) store='Gadis';
+  if(!store&&lines.some(l=>/A15022510/.test(l))) store='Gadis';
   const isMercadonaDigital=(store.toLowerCase().includes('mercadona')||lines.some(l=>/mercadona/i.test(l)))&&lines.some(l=>/descripci[oó]n/i.test(l))&&lines.some(l=>/p\.\s*unit/i.test(l));
 
   // Fecha y hora
@@ -230,7 +232,8 @@ function parseTicketText(text){
     let hEnd=0;for(let i=0;i<allLines.length;i++){const l=allLines[i].trim();if(/^descripcion\b/i.test(l)){hEnd=i+1;break;}if(/^nif\b|^cif\b/i.test(l))hEnd=i+1;}
     let docEnd=allLines.length;for(let i=hEnd;i<allLines.length;i++){if(FCUTRX.test(allLines[i].trim())){docEnd=i;break;}}
     const body=allLines.slice(hEnd,docEnd);
-    function iFN(l){if(!l||l.length<3)return false;if(FCRX.test(l)||iFP(l))return false;if(/^\d+$/.test(l)||/^\d+%$/.test(l))return false;if(/^importe$/i.test(l))return false;if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))return false;if(/^(nif|cif|factura|simplificada|descripcion|cant|p\.v\.p)/i.test(l))return false;return true;}
+    function iFN(l){if(!l||l.length<3)return false;if(FCRX.test(l)||iFP(l))return false;if(/^\d+$/.test(l)||/^\d+%$/.test(l))return false;if(/^\[[\d\s]*\]$/.test(l))return false; // OCR garbage like [0]
+      if(/^importe$/i.test(l))return false;if(isSkip(l)||BARCODE_RX.test(l)||SEP_RX.test(l))return false;if(/^(nif|cif|factura|simplificada|descripcion|cant|p\.v\.p)/i.test(l))return false;return true;}
     const names=body.filter(l=>iFN(l.trim()));const fni=body.findIndex(l=>iFN(l.trim()));const ii=body.findIndex(l=>/^importe$/i.test(l.trim()));const iH=ii>=0&&ii<fni;
     const prices=[];
     if(!iH){const uP=[],ivP=[];let pC=false,pI=false;for(const l of body){const t=l.trim();if(/^importe$/i.test(t)){pI=true;pC=false;continue;}if(FCRX.test(t)){pC=true;continue;}if(/^\d+%$/.test(t)||(/^\d+$/.test(t)&&!FCRX.test(t))){pC=false;continue;}if(iFP(t)){const p=fp(t);if(p!=null&&p>0&&p<500){if(pC)uP.push(p);else if(pI)ivP.push(p);}pC=false;}else pC=false;}
@@ -640,7 +643,19 @@ function renderDevSettings(){return`
   <div class="settings-action-row"><button class="btn-secondary btn-full" onclick="DB.aiConvMessages=[];saveDB();location.reload()">Actualizar app</button></div>
   <div class="settings-action-row"><button class="btn-secondary btn-full btn-muted" onclick="DB.devMode=false;S.set('devMode',false);saveDB();renderSettings();showToast('Modo desarrollador desactivado')">Ocultar opciones de desarrollador</button></div>`;}
 
-function editKnowledgeProducts(){const prods=Object.entries(DB.knowledge.products).sort((a,b)=>a[0].localeCompare(b[0]));if(!prods.length){showToast('No hay productos aprendidos todavía');return;}const rows=prods.map(([key,v])=>`<div class="knowledge-row"><div class="knowledge-raw">${v.ocr_raw?.[0]||key}</div><div class="knowledge-edit-row"><input value="${v.alias||key}" class="knowledge-name-input" onchange="renameKnowledgeProduct('${key}',this.value)"/><button onclick="deleteKnowledgeProduct('${key}')" class="btn-remove-inline">×</button></div><select onchange="assignKnowledgeProduct('${key}',this.value)" class="knowledge-select"><option value="" ${!v.person?'selected':''}>Común</option>${DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}</select></div>`).join('');openModal(`<div class="modal-title">Productos aprendidos</div><p class="modal-hint">Edita el nombre, asigna a persona o elimina.</p><div class="knowledge-list">${rows}</div><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="saveDB();closeModal();showToast('Guardado');renderSettings()">Guardar</button></div>`);}
+function editKnowledgeProducts(){
+  // Deduplicar: quedarse con una entrada por alias (la más completa)
+  const byAlias={};
+  for(const [key,v] of Object.entries(DB.knowledge.products)){
+    const alias=(v.alias||key).toLowerCase().trim();
+    if(!byAlias[alias]||( v.count||0)>(byAlias[alias].count||0))
+      byAlias[alias]={key,v};
+  }
+  const prods=Object.values(byAlias).sort((a,b)=>(a.v.alias||a.key).localeCompare(b.v.alias||b.key,'es'));
+  if(!prods.length){showToast('No hay productos aprendidos todavía');return;}
+  const rows=prods.map(({key,v})=>`<div class="knowledge-row"><div class="knowledge-raw">${v.ocr_raw?.[0]||key}</div><div class="knowledge-edit-row"><input value="${v.alias||key}" class="knowledge-name-input" onchange="renameKnowledgeProduct('${key}',this.value)"/><button onclick="deleteKnowledgeProduct('${key}')" class="btn-remove-inline">×</button></div><select onchange="assignKnowledgeProduct('${key}',this.value)" class="knowledge-select"><option value="" ${!v.person?'selected':''}>Común</option>${DB.persons.map(p=>`<option value="${p.id}" ${v.person===p.id?'selected':''}>${p.name}</option>`).join('')}</select></div>`).join('');
+  openModal(`<div class="modal-title">Productos aprendidos</div><p class="modal-hint">Edita el nombre, asigna a persona o elimina.</p><div class="knowledge-list">${rows}</div><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="saveDB();closeModal();showToast('Guardado');renderSettings()">Guardar</button></div>`);
+}
 function assignKnowledgeProduct(key,pid){if(!DB.knowledge.products[key])return;DB.knowledge.products[key].person=pid||null;DB.knowledge.products[key].shared=!pid;}
 function renameKnowledgeProduct(key,newName){if(!newName.trim())return;const entry=DB.knowledge.products[key];if(!entry)return;const trimmed=newName.trim();entry.alias=trimmed;const newKey=normalizeKey(trimmed);if(newKey&&newKey!==key)DB.knowledge.products[newKey]={...entry,alias:trimmed};}
 function deleteKnowledgeProduct(key){delete DB.knowledge.products[key];saveDB();editKnowledgeProducts();}
