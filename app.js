@@ -197,23 +197,63 @@ function parseTicketText(text){
     const APKRX=/^(\d+)\s*[xX]\s*(\d{1,3}[.,]\d{2})$/;
     const APKTRX=/^(\d+)\s*[xX]\s*(\d{2,3})$/;
     const AQRX=/^(\d+)\s*[xX]\s*$/;
-    const ASKRX=/^(factura|simplificada|tarjeta|cambio|num\.|base|cuota|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campa|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*|vert$|dama$|rma\s+no|redsys|contactless|visa\s+debit|venta$|moneda$)/i;
+    const ASKRX=/^(factura|simplificada|tarjeta\s+bancaria|cambio|num\.|base|cuota|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campa|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*|vert$|dama$|rma\s+no|redsys|contactless|visa\s+debit|venta$|moneda$)/i;
     const ANRX=/^([ABC]$|92$|€\*$|tot$|esp$|\d{2}$|\d+\s*[xX]\s*$)/i;
     function iAP(l){return APR.test(l)||/^,\d{2}\s*[ABC]?$/.test(l)||/^\d{2}\s+[ABC]$/.test(l);}
     function pAP(l){const c=l.replace(/[ABC\s]/g,'').replace(',','.');const v=c.startsWith('.')?parseFloat('0'+c):parseFloat(c);if(v>=10&&v<100&&/^\d{2}\s+[ABC]$/.test(l))return v/100;return v;}
     function isOCRGarbage(l){const nonLatin=(l.match(/[^\x00-\x7F\u00C0-\u024F\u20AC€.,\d\s\-\/()]/g)||[]).length;return nonLatin>l.length*0.3;}
-    function iAN(l){if(!l||l.length<3)return false;if(iAP(l)||APKRX.test(l)||AQRX.test(l))return false;if(ASKRX.test(l)||ANRX.test(l))return false;if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l))return false;if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l))return false;if(/calle|avda|plaza|s\.a\.|cif\./i.test(l))return false;if(/^\d{1,2}\/\d{2}\/\d{2}/.test(l))return false;if(store&&l.toLowerCase().includes(store.toLowerCase()))return false;if(/^alcampo\b/i.test(l))return false;if(/^\d{4,}/.test(l))return false;if(isOCRGarbage(l))return false;return /[A-Za-záéíóúñÁÉÍÓÚÑ]/.test(l);}
+    // Extrae nombre de producto si la línea mezcla prefijo espejo + nombre en mayúsculas
+    // Ej: "nogal bl SEITAN MANFONG" → "SEITAN MANFONG"
+    function extractProductFromMixed(l){
+      const m=l.match(/^(?:[a-záéíóúñ\d\s()]+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s.'0-9]{2,})$/);
+      return (m&&m[1].trim().length>=3)?m[1].trim():null;
+    }
+    function iAN(l){
+      if(!l||l.length<3)return false;
+      if(iAP(l)||APKRX.test(l)||AQRX.test(l))return false;
+      if(ASKRX.test(l)||ANRX.test(l))return false;
+      if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l))return false;
+      if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l))return false;
+      if(/calle|avda|plaza|s\.a\.|cif\./i.test(l))return false;
+      if(/^\d{1,2}\/\d{2}\/\d{2}/.test(l))return false;
+      if(store&&l.toLowerCase().includes(store.toLowerCase()))return false;
+      if(/^alcampo\b/i.test(l))return false;
+      if(/^\d{4,}/.test(l))return false;
+      if(isOCRGarbage(l))return false;
+      // Alcampo: los nombres válidos tienen al menos una palabra de 3+ mayúsculas
+      if(!/\b[A-ZÁÉÍÓÚÑ]{3,}/.test(l))return false;
+      return true;
+    }
     let start=0,orphanQty=null,orphanUnitPrice=null;
     for(let i=0;i<allLines.length;i++){const t=allLines[i].trim();const qm=t.match(/^(\d+)\s*[xX]\s*$/);if(qm&&parseInt(qm[1])>1)orphanQty=parseInt(qm[1]);const qmP=t.match(/^(\d+)\s*[xX]\s*(\d{2,3})$/);if(qmP){orphanQty=parseInt(qmP[1]);orphanUnitPrice=parseFloat('0.'+qmP[2]);}if(/factura\s+simplificada/i.test(t)){start=i+1;break;}}
     let end_=allLines.length;
     for(let i=start;i<allLines.length;i++){const t=allLines[i].trim();if(/^(tarjeta\s+bancaria|num\.\s*total|cambio|para\s+el\s+cliente)/i.test(t)){end_=i;break;}if(/^€[\s*]/.test(t)){end_=i;break;}if(/^tot$/i.test(t)){end_=i;break;}}
     const afterTOT=[];
-    for(let i=end_;i<Math.min(end_+6,allLines.length);i++){const t=allLines[i].trim();if(!t||/^(tot$|€[\s*]|tarjeta|cambio|num\.|para\s+el|\.|venta)/i.test(t))continue;const dm=t.match(/^(\d{1,3}[.,]\d{2})\s+\w/);if(dm){const p=pAP(dm[1]);if(p>0&&p<20)afterTOT.push(p);continue;}if(/^(tarjeta bancaria|num\.\s*total)/i.test(t))break;if(iAP(t)){const p=pAP(t);if(p>0&&p<20)afterTOT.push(p);else break;}}
+    for(let i=end_;i<Math.min(end_+15,allLines.length);i++){
+      const t=allLines[i].trim();
+      if(!t)continue;
+      // Skip standalone separators/headers without stopping
+      if(/^(€[\s*]?$|tarjeta$|€$)/i.test(t))continue;
+      // Stop at payment section headers
+      if(/^(tarjeta\s+bancaria|num\.\s*total|cambio|para\s+el|venta\b|tot$)/i.test(t))break;
+      const dm=t.match(/^(\d{1,3}[.,]\d{2})\s+\w/);if(dm){const p=pAP(dm[1]);if(p>0&&p<30)afterTOT.push(p);continue;}
+      if(iAP(t)){const p=pAP(t);if(p>0&&p<30)afterTOT.push(p);}
+    }
     let descIdx=-1;for(let i=0;i<allLines.length;i++)if(/^descripci[oó]n$/i.test(allLines[i].trim())){descIdx=i;break;}
     const preH=(descIdx>=0&&descIdx<start)?allLines.slice(descIdx+1,start).map(l=>l.trim()).filter(l=>l):[];
     const body=[...preH,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l)];
     const tokens=[];let pendingQty=null;
-    for(const l of body){if(!l||ANRX.test(l)||ASKRX.test(l))continue;const qom=l.match(AQRX);if(qom){pendingQty=parseInt(qom[1]);continue;}const pm=l.match(APKRX);if(pm){tokens.push({type:'pack',qty:parseInt(pm[1]),unitP:parseFloat(pm[2].replace(',','.'))});continue;}const ptm=l.match(APKTRX);if(ptm){tokens.push({type:'pack',qty:parseInt(ptm[1]),unitP:parseFloat('0.'+ptm[2])});continue;}if(iAN(l)){tokens.push({type:'name',val:l,qty:pendingQty||1});pendingQty=null;continue;}if(iAP(l)){const p=pAP(l);if(p>=0)tokens.push({type:'price',val:p});continue;}}
+    for(let _li=0;_li<body.length;_li++){
+      const _raw=body[_li];if(!_raw)continue;
+      // Limpiar líneas espejo con nombre de producto embebido: "nogal bl SEITAN MANFONG" → "SEITAN MANFONG"
+      const l=extractProductFromMixed(_raw)||_raw;
+      if(ANRX.test(l)||ASKRX.test(l))continue;
+      const qom=l.match(AQRX);if(qom){pendingQty=parseInt(qom[1]);continue;}
+      const pm=l.match(APKRX);if(pm){tokens.push({type:'pack',qty:parseInt(pm[1]),unitP:parseFloat(pm[2].replace(',','.'))});continue;}
+      const ptm=l.match(APKTRX);if(ptm){tokens.push({type:'pack',qty:parseInt(ptm[1]),unitP:parseFloat('0.'+ptm[2])});continue;}
+      if(iAN(l)){tokens.push({type:'name',val:l,qty:pendingQty||1});pendingQty=null;continue;}
+      if(iAP(l)){const p=pAP(l);if(p>=0)tokens.push({type:'price',val:p});continue;}
+    }
     afterTOT.forEach(p=>tokens.push({type:'price',val:p}));
     const entries=[];let pendingPack=null,j=0;
     while(j<tokens.length){const tk=tokens[j];if(tk.type==='pack'){pendingPack={qty:tk.qty,unitP:tk.unitP};j++;continue;}if(tk.type==='name'){let nameRun=0,k=j;while(k<tokens.length&&tokens[k].type==='name'){nameRun++;k++;}let priceRun=0,m=k;while(m<tokens.length&&tokens[m].type==='price'){priceRun++;m++;}if(nameRun>1&&priceRun>=nameRun){const be=[];for(let n=0;n<nameRun;n++){const nt=tokens[j+n];be.push({name:nt.val,qty:nt.qty,unitP:null,price:tokens[k+n]?.val??null,raw:nt.val});}if(pendingPack){const et=parseFloat((pendingPack.qty*pendingPack.unitP).toFixed(2));const mi=be.findIndex(e=>e.price!=null&&Math.abs(e.price-et)<0.05);const ai=mi>=0?mi:0;be[ai].qty=pendingPack.qty;be[ai].unitP=pendingPack.unitP;pendingPack=null;}be.forEach(e=>entries.push(e));j=k+nameRun;while(j<tokens.length&&tokens[j].type==='price'){const p=tokens[j].val;const me2=entries.slice(-nameRun).find(e=>e.qty>1&&e.price&&Math.abs(e.price*e.qty-p)<0.02);if(me2)j++;else break;}}else if(nameRun>1&&priceRun>0&&priceRun<nameRun){for(let n=0;n<nameRun;n++){const nt=tokens[j+n];const entry={name:nt.val,qty:nt.qty,unitP:null,price:n<priceRun?tokens[k+n].val:null,raw:nt.val};if(pendingPack&&n===0){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}entries.push(entry);}j=k+priceRun;}else{const entry={name:tk.val,qty:tk.qty,unitP:null,price:null,raw:tk.val};if(pendingPack){entry.qty=pendingPack.qty;entry.unitP=pendingPack.unitP;pendingPack=null;}entries.push(entry);j++;if(j<tokens.length&&tokens[j].type==='price'){entry.price=tokens[j].val;j++;if(entry.qty>1&&j<tokens.length&&tokens[j].type==='price'&&Math.abs(tokens[j].val-entry.price*entry.qty)<0.02)j++;}}continue;}if(tk.type==='price'){if(entries.length>0){let stolenIdx=-1,nullIdx=-1;for(let k2=entries.length-1;k2>=Math.max(0,entries.length-8);k2--){const e2=entries[k2];if(e2.price==null&&e2.unitP==null&&nullIdx<0)nullIdx=k2;if(e2.price!=null&&e2.unitP==null&&stolenIdx<0){const isSt=entries.slice(Math.max(0,k2-3),k2+3).some(pe=>pe!==e2&&pe.unitP!=null&&pe.qty>1&&Math.abs(pe.unitP*pe.qty-e2.price)<0.02);if(isSt)stolenIdx=k2;}}if(stolenIdx>=0&&(nullIdx<0||stolenIdx>nullIdx))entries[stolenIdx].price=tk.val;else if(nullIdx>=0)entries[nullIdx].price=tk.val;}j++;continue;}j++;}
