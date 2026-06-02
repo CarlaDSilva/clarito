@@ -197,11 +197,12 @@ function parseTicketText(text){
     const APKRX=/^(\d+)\s*[xX]\s*(\d{1,3}[.,]\d{2})$/;
     const APKTRX=/^(\d+)\s*[xX]\s*(\d{2,3})$/;
     const AQRX=/^(\d+)\s*[xX]\s*$/;
-    const ASKRX=/^(factura|simplificada|tarjeta|cambio|num\.|base|cuota|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campa|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*)/i;
+    const ASKRX=/^(factura|simplificada|tarjeta|cambio|num\.|base|cuota|para\s+el|establecimiento|localidad|fecha|numero|tipo\s+de|codigo|importe\s+moneda|verificacion|etiqueta|n\.\s*referencia|entidad|pin|firma|a\s+tu|campa|con\s+\d|consigue|descuento|sellos|puc|arc:|aid|alcampo\s+s\.a|santiago|tot$|€\*|vert$|dama$|rma\s+no|redsys|contactless|visa\s+debit|venta$|moneda$)/i;
     const ANRX=/^([ABC]$|92$|€\*$|tot$|esp$|\d{2}$|\d+\s*[xX]\s*$)/i;
     function iAP(l){return APR.test(l)||/^,\d{2}\s*[ABC]?$/.test(l)||/^\d{2}\s+[ABC]$/.test(l);}
     function pAP(l){const c=l.replace(/[ABC\s]/g,'').replace(',','.');const v=c.startsWith('.')?parseFloat('0'+c):parseFloat(c);if(v>=10&&v<100&&/^\d{2}\s+[ABC]$/.test(l))return v/100;return v;}
-    function iAN(l){if(!l||l.length<3)return false;if(iAP(l)||APKRX.test(l)||AQRX.test(l))return false;if(ASKRX.test(l)||ANRX.test(l))return false;if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l))return false;if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l))return false;if(/calle|avda|plaza|s\.a\.|cif\./i.test(l))return false;if(/^\d{1,2}\/\d{2}\/\d{2}/.test(l))return false;if(store&&l.toLowerCase().includes(store.toLowerCase()))return false;if(/^alcampo\b/i.test(l))return false;if(/^\d{4,}/.test(l))return false;return /[A-Za-záéíóúñÁÉÍÓÚÑ]/.test(l);}
+    function isOCRGarbage(l){const nonLatin=(l.match(/[^\x00-\x7F\u00C0-\u024F\u20AC€.,\d\s\-\/()]/g)||[]).length;return nonLatin>l.length*0.3;}
+    function iAN(l){if(!l||l.length<3)return false;if(iAP(l)||APKRX.test(l)||AQRX.test(l))return false;if(ASKRX.test(l)||ANRX.test(l))return false;if(isSkip(l)||SEP_RX.test(l)||BARCODE_RX.test(l))return false;if(/^\d+$/.test(l)||/^[,.]\d+$/.test(l))return false;if(/calle|avda|plaza|s\.a\.|cif\./i.test(l))return false;if(/^\d{1,2}\/\d{2}\/\d{2}/.test(l))return false;if(store&&l.toLowerCase().includes(store.toLowerCase()))return false;if(/^alcampo\b/i.test(l))return false;if(/^\d{4,}/.test(l))return false;if(isOCRGarbage(l))return false;return /[A-Za-záéíóúñÁÉÍÓÚÑ]/.test(l);}
     let start=0,orphanQty=null,orphanUnitPrice=null;
     for(let i=0;i<allLines.length;i++){const t=allLines[i].trim();const qm=t.match(/^(\d+)\s*[xX]\s*$/);if(qm&&parseInt(qm[1])>1)orphanQty=parseInt(qm[1]);const qmP=t.match(/^(\d+)\s*[xX]\s*(\d{2,3})$/);if(qmP){orphanQty=parseInt(qmP[1]);orphanUnitPrice=parseFloat('0.'+qmP[2]);}if(/factura\s+simplificada/i.test(t)){start=i+1;break;}}
     let end_=allLines.length;
@@ -605,8 +606,51 @@ function renderStats(){
     ${topProds.length||catSorted.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}</details>`:''}`;
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
-function renderInventorySection(){const preds=getPredictions();if(!preds.length)return`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;return preds.slice(0,8).map(p=>{const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div></div>`;}).join('');}
-function getPredictions(){const cT=DB.tickets.filter(t=>t.confirmed&&t.date);if(cT.length===0&&DB.knowledge?.cachedDespensa?.length){const now=Date.now();return DB.knowledge.cachedDespensa.map(p=>{const lMs=p.lastDate?new Date(p.lastDate).getTime():now;const dS=(now-lMs)/864e5;const dL=Math.max(0,Math.round(p.freq-dS));return{name:p.name,days:dL,freq:p.freq,detail:'Cada ~'+p.freq+'d · hace '+Math.round(dS)+'d'};}).sort((a,b)=>a.days-b.days);}const ph={};cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k)return;if(!ph[k])ph[k]={name:p.name,dates:[],category:p.category||'otro'};ph[k].dates.push(d);});});const now=Date.now();return Object.values(ph).filter(v=>v.dates.length>=2).map(item=>{item.dates.sort((a,b)=>a-b);const gaps=[];for(let i=1;i<item.dates.length;i++)gaps.push((item.dates[i]-item.dates[i-1])/864e5);const avgFreq=gaps.reduce((s,g)=>s+g,0)/gaps.length;const daysSince=(now-item.dates[item.dates.length-1])/864e5;const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};}).sort((a,b)=>a.days-b.days);}
+function renderInventorySection(){
+  const preds=getPredictions();
+  if(!preds.length)return`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;
+  return preds.slice(0,15).map(p=>{
+    const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
+    const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
+    const key=normalizeKey(p.name);
+    return`<div class="inv-row"><div class="inv-name">${p.name}</div><div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div><div class="inv-days">~${p.days}d</div><button class="inv-archive-btn" onclick="archiveDespensa('${key}')" title="Archivar">−</button></div>`;
+  }).join('');
+}
+function archiveDespensa(key){
+  if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
+  if(!DB.knowledge.archivedDespensa) DB.knowledge.archivedDespensa=[];
+  if(!DB.knowledge.archivedDespensa.includes(key)) DB.knowledge.archivedDespensa.push(key);
+  saveDB();renderStats();
+}
+function getPredictions(){
+  const cT=DB.tickets.filter(t=>t.confirmed&&t.date);
+  const archived=new Set(DB.knowledge?.archivedDespensa||[]);
+  if(cT.length===0&&DB.knowledge?.cachedDespensa?.length){
+    const now=Date.now();
+    return DB.knowledge.cachedDespensa
+      .filter(p=>!archived.has(normalizeKey(p.name)))
+      .map(p=>{const lMs=p.lastDate?new Date(p.lastDate).getTime():now;const dS=(now-lMs)/864e5;const dL=Math.max(0,Math.round(p.freq-dS));return{name:p.name,days:dL,freq:p.freq,detail:'Cada ~'+p.freq+'d · hace '+Math.round(dS)+'d'};})
+      .sort((a,b)=>a.days-b.days);
+  }
+  const ph={};
+  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[]};ph[k].dates.push(d);});});
+  const now=Date.now();
+  return Object.values(ph)
+    .filter(v=>v.dates.length>=2)
+    .map(item=>{
+      item.dates.sort((a,b)=>a-b);
+      // Dedup same-day entries (mismo producto en ticket del mismo día)
+      const uniq=[...new Set(item.dates.map(d=>Math.floor(d/864e5)))].map(d=>d*864e5);
+      if(uniq.length<2) return null;
+      const gaps=[];for(let i=1;i<uniq.length;i++)gaps.push((uniq[i]-uniq[i-1])/864e5);
+      const avgFreq=Math.max(7,gaps.reduce((s,g)=>s+g,0)/gaps.length);
+      const daysSince=(now-uniq[uniq.length-1])/864e5;
+      const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));
+      return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};
+    })
+    .filter(Boolean)
+    .sort((a,b)=>a.days-b.days);
+}
 
 // ── SETTINGS ──────────────────────────────────────────────────
 function renderSettings(){
