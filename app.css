@@ -171,7 +171,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .product-price-block{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0}
 .price-unit-row{display:flex;align-items:center;gap:4px}
 .price-unit-label{font-size:11px;color:var(--txt2)}
-.price-unit-val{font-size:10px;color:var(--txt0);width:64px;text-align:right;opacity:0.5}
+.price-unit-val{font-size:10px;color:var(--txt0);width:64px;text-align:right;opacity:0.35}
 .price-total-row{display:flex;align-items:center;gap:4px}
 .price-qty{font-size:12px;color:var(--txt2);min-width:20px;text-align:center}
 .price-prev{font-size:10px;color:var(--txt3);display:block;text-align:right}
@@ -184,7 +184,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .assign-btn.active{background:color-mix(in srgb,var(--assign-color) 20%,transparent);color:var(--assign-color);border-color:var(--assign-color)}
 .assign-btn.shared{color:var(--txt2);border-color:var(--brd)}
 .assign-btn.shared.active{background:rgba(74,158,255,.15);color:#4a9eff;border-color:#4a9eff}
-.product-price-input{width:64px;text-align:right;font-size:18px;font-weight:800;background:transparent;border:none;border-bottom:2px solid var(--brd);padding:2px 4px;color:var(--txt0);border-radius:0;transition:border-color .15s,opacity .15s;opacity:0.5}
+.product-price-input{width:64px;text-align:right;font-size:18px;font-weight:800;background:transparent;border:none;border-bottom:2px solid var(--brd);padding:2px 4px;color:var(--txt0);border-radius:0;transition:border-color .15s,opacity .15s;opacity:0.35}
 .product-price-input:focus{border-bottom-color:var(--accent);outline:none;opacity:1}
 .pct-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700;border:1px solid var(--brd);color:var(--txt2);cursor:pointer;white-space:nowrap;transition:.15s}
 .pct-badge.active{border-color:var(--accent);color:var(--accent);background:rgba(124,110,245,.1)}
