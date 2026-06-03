@@ -18,26 +18,30 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 /* ── SPLASH ── */
 #splash{position:fixed;inset:0;z-index:2000;background:var(--bg0);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;transition:opacity .4s ease}
 #splash.hidden{opacity:0;pointer-events:none}
-#splash-logo-wrap{width:110px;height:110px;border-radius:28px;background:linear-gradient(135deg,#1a1535,#2a1f5e);border:1.5px solid rgba(124,110,245,.4);box-shadow:0 8px 40px rgba(124,110,245,.3);display:flex;align-items:center;justify-content:center;animation:logoPop .5s cubic-bezier(.34,1.56,.64,1) both;overflow:hidden;position:relative;z-index:1}
 .splash-logo-container{position:relative;width:110px;height:110px;display:flex;align-items:center;justify-content:center}
+#splash-logo-wrap{width:110px;height:110px;border-radius:28px;background:linear-gradient(135deg,#1a1535,#2a1f5e);border:1.5px solid rgba(124,110,245,.4);box-shadow:0 8px 40px rgba(124,110,245,.3);display:flex;align-items:center;justify-content:center;animation:logoPop .5s cubic-bezier(.34,1.56,.64,1) both;overflow:hidden;position:relative;z-index:1}
 #splash-logo{width:80px;height:80px;object-fit:contain;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)}
-/* Halos: divs hermanos posicionados sobre el logo */
-.splash-halo{
-  position:absolute;
+/* Halos: position:fixed centrados en pantalla, desaparecen con el splash */
+#splash .splash-halo{
+  position:fixed;
   width:110px;height:110px;
   border-radius:28px;
-  border:2px solid rgba(124,110,245,.65);
+  border:2px solid rgba(124,110,245,.7);
+  left:50%;top:50%;
+  margin-left:-55px;margin-top:-55px;
   animation:haloExpand 2.4s cubic-bezier(.15,.8,.35,1) infinite;
   pointer-events:none;
-  top:0;left:0;
+  z-index:1999;
+  transition:opacity .4s ease;
 }
-.splash-halo:nth-child(1){animation-delay:0s;}
-.splash-halo:nth-child(2){animation-delay:.8s;border-color:rgba(124,110,245,.45);}
-.splash-halo:nth-child(3){animation-delay:1.6s;border-color:rgba(124,110,245,.28);}
+#splash.hidden .splash-halo{opacity:0;}
+#splash .splash-halo:nth-child(1){animation-delay:0s;}
+#splash .splash-halo:nth-child(2){animation-delay:.8s;border-color:rgba(124,110,245,.5);}
+#splash .splash-halo:nth-child(3){animation-delay:1.6s;border-color:rgba(124,110,245,.3);}
 @keyframes logoPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes haloExpand{
   0%  {transform:scale(1);opacity:1}
-  100%{transform:scale(3.5);opacity:0}
+  100%{transform:scale(4);opacity:0}
 }
 .splash-title{font-size:32px;font-weight:800;letter-spacing:-1px;color:#d7dae5}
 .splash-sub{font-size:14px;color:var(--txt2);letter-spacing:.2px}
