@@ -916,9 +916,12 @@ function sendDespensaToReminders(){
     items.forEach(name=>lines.push(name));
   });
   const text=lines.join('\n');
-  // iOS Shortcuts: el parámetro correcto es 'input' en shortcuts://run-shortcut
   const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=text&text=${encodeURIComponent(text)}`;
-  window.location.href=url;
+  // Usar <a> con click fuerza el scheme en iOS PWA mejor que location.href
+  const a=document.createElement('a');
+  a.href=url;a.style.display='none';
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>a.remove(),500);
   showToast('Abriendo Atajos…',2000);
 }
 function toggleBoughtDespensa(key,checked){
