@@ -769,7 +769,7 @@ function renderStats(){
   const now=new Date();const thisMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;const allT=DB.tickets.filter(t=>t.confirmed);const monthStart=thisMonth+'-01';const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);const monthT=allT.filter(t=>t.date&&t.date>=monthStart&&t.date<=monthEnd);const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
   const monthByPerson={},monthPaidOut={};DB.persons.forEach(p=>{monthByPerson[p.id]=0;monthPaidOut[p.id]=0;});
   monthT.forEach(t=>{monthPaidOut[t.payer]=(monthPaidOut[t.payer]||0)+(parseFloat(t.total)||0);(t.products||[]).forEach(prod=>{const price=parseFloat(prod.finalPrice||prod.price||0);if(!price)return;if(prod.assignedTo)monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;});});});
-  DB.expenses.filter(e=>e.confirmed&&e.date&&e.date>=monthStart&&e.date<=monthEnd).forEach(e=>{const amt=parseFloat(e.total||0);monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;DB.persons.forEach((p,i)=>{const pct=i===0?e.split1:100-e.split1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*(pct||50)/100;});});
+  DB.expenses.filter(e=>e.confirmed&&e.date&&e.date>=monthStart&&e.date<=monthEnd).forEach(e=>{const amt=parseFloat(e.total||0);if(!amt)return;monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;const s1=e.split1??50;DB.persons.forEach((p,i)=>{const pct=i===0?s1:100-s1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*pct/100;});});
   const catMap={};allT.forEach(t=>(t.products||[]).forEach(p=>{const c=p.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(p.finalPrice||p.price||0);}));DB.expenses.filter(e=>e.confirmed).forEach(e=>{const c=e.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(e.total||0);});
   const catSorted=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,6);const catMax=catSorted[0]?catSorted[0][1]:1;
   const storeMap={};allT.forEach(t=>{if(t.store)storeMap[t.store]=(storeMap[t.store]||0)+(parseFloat(t.total)||0);});const storeSorted=Object.entries(storeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
@@ -781,10 +781,10 @@ function renderStats(){
     <div class="recent-label">Gasto este mes por persona</div>
     <div class="persons-stats-grid">${DB.persons.map(p=>`<div class="stat-card stat-card-person" style="--person-color:${p.color}"><div class="stat-label">${p.name}</div><div class="stat-value stat-value-person">${fmt(monthByPerson[p.id]||0)}</div><div class="stat-paid-out">Pagó en caja: ${fmt(monthPaidOut[p.id]||0)}</div></div>`).join('')}</div>
     ${anomalies.length?`<div class="anomalies-list">${anomalies.map(a=>`<div class="anomaly-chip">${a}</div>`).join('')}</div>`:''}
-    <div class="recent-label inv-label-row">
-      Despensa estimada
-      <button class="inv-reminders-btn" onclick="sendDespensaToReminders()" title="Enviar a Recordatorios">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    <div class="inv-section-header">
+      <span class="recent-label" style="padding:0">Despensa estimada</span>
+      <button class="inv-reminders-btn" onclick="sendDespensaToReminders()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Recordatorios
       </button>
     </div>
@@ -846,28 +846,30 @@ function buildInventoryRows(preds, bought){
     if(!byStore[s]) byStore[s]=[];
     byStore[s].push(p);
   });
-  return Object.entries(byStore).map(([storeName,items])=>`
-    <div class="inv-store-label">${storeName}</div>
-    ${items.map(p=>{
-      const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
-      const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
-      const key=normalizeKey(p.name);
-      const isBought=bought.has(key);
-      return`<div class="inv-row ${isBought?'inv-bought':''}">
-        <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)"/>
-        <div class="inv-name">${p.name}</div>
-        <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div>
-        <div class="inv-days">~${p.days}d</div>
-        <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar de la lista">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-            <line x1="1" y1="1" x2="23" y2="23"/>
-          </svg>
-        </button>
-      </div>`;
-    }).join('')}
-  `).join('');
+  return`<div class="inv-cards-wrap">`+Object.entries(byStore).map(([storeName,items])=>`
+    <div class="inv-store-card">
+      <div class="inv-store-card-header">${storeName}</div>
+      ${items.map(p=>{
+        const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
+        const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
+        const key=normalizeKey(p.name);
+        const isBought=bought.has(key);
+        return`<div class="inv-row ${isBought?'inv-bought':''}">
+          <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)"/>
+          <div class="inv-name">${p.name}</div>
+          <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+          <div class="inv-days">~${p.days}d</div>
+          <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('')+'</div>';
 }
 function sendDespensaToReminders(){
   const preds=getPredictions();
@@ -889,8 +891,10 @@ function sendDespensaToReminders(){
     items.forEach(name=>lines.push(name));
   });
   const text=lines.join('\n');
-  const encoded=encodeURIComponent(text);
-  window.location.href=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encoded}`;
+  // iOS Shortcuts: el parámetro correcto es 'input' en shortcuts://run-shortcut
+  const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=text&text=${encodeURIComponent(text)}`;
+  window.location.href=url;
+  showToast('Abriendo Atajos…',2000);
 }
 function toggleBoughtDespensa(key,checked){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
@@ -898,9 +902,10 @@ function toggleBoughtDespensa(key,checked){
   if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
   else{DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);}
   saveDB();
-  const row=document.querySelector(`.inv-check[data-key="${key}"]`)?.closest('.inv-row');
-  if(row) row.classList.toggle('inv-bought',checked);
-  if(checked) showUndoToast('Marcado como comprado',()=>toggleBoughtDespensa(key,false));
+  if(checked) showUndoToast('Marcado como comprado',()=>{
+    DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);
+    saveDB();renderStats();
+  });
 }
 function showUndoToast(msg,undoFn,dur=4000){
   document.querySelector('.toast')?.remove();
