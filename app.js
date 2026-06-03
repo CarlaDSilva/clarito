@@ -26,6 +26,15 @@ function showOCRLoading(msg){document.getElementById('ocr-loading').style.displa
 function setOCRStatus(msg){document.getElementById('ocr-status').textContent=msg;}
 function hideOCRLoading(){document.getElementById('ocr-loading').style.display='none';}
 function hideSplash(){const s=document.getElementById('splash');s.classList.add('hidden');setTimeout(()=>s.style.display='none',450);}
+function positionHalo(){
+  const wrap=document.getElementById('splash-logo-wrap');
+  const halo=document.querySelector('.splash-halo');
+  if(!wrap||!halo) return;
+  const r=wrap.getBoundingClientRect();
+  halo.style.left=(r.left+r.width/2)+'px';
+  halo.style.top=(r.top+r.height/2)+'px';
+  halo.style.marginLeft='';halo.style.marginTop='';
+}
 
 let currentScreen='home';
 function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
@@ -1071,10 +1080,11 @@ loadDB();
 DB.aiConvMessages=[];
 expireOldTickets();
 handleShareTarget();
+positionHalo();
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
     if(!DB.visionKey){startSetup();}
     else{document.getElementById('app').style.display='flex';showScreen('home');updateAIBadge();}
   },100);
-},2500);
+},6000);
