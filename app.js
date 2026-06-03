@@ -902,6 +902,7 @@ function toggleBoughtDespensa(key,checked){
   if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
   else{DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);}
   saveDB();
+  renderStats();
   if(checked) showUndoToast('Marcado como comprado',()=>{
     DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(k=>k!==key);
     saveDB();renderStats();
