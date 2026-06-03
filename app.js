@@ -486,8 +486,8 @@ function normalizeProdName(raw){return raw.replace(/\bLT\b/gi,'litro').replace(/
 function guessCategory(name){const n=name.toLowerCase();if(/leche|yogur|queso|mantequilla|nata|kefir/.test(n))return 'lácteos';if(/cerveza|agua|refresco|zumo|vino|cava|whisky|ron|gin|vodka/.test(n))return 'bebidas';if(/pollo|carne|ternera|cerdo|salchich|jamón|chorizo|longaniza|pavo|cordero/.test(n))return 'carne';if(/merluza|salmon|atún|bacalao|dorada|lubina|gamba|mejillon|calamar/.test(n))return 'pescado';if(/manzana|pera|naranja|plátano|fresa|uva|melocoton|mandarina|limón|kiwi|lechuga|tomate|patata|cebolla|zanahoria|pimiento|calabacin|espinaca|brócoli/.test(n))return 'fruta';if(/helado|pizza|croqueta|nugget|varitas/.test(n))return 'congelados';if(/gel|champú|jabón|pasta\s*dent|colonia|desodorante|crema|maquillaje|sensodyne|atopic/.test(n))return 'higiene';if(/lejia|suavizante|detergente|fregasuelos|bayeta|estropajo|bolsa\s*basura/.test(n))return 'limpieza';return 'alimentación';}
 
 // ── GROQ ──────────────────────────────────────────────────────
-async function callGroq(prompt){const key=DB.groqKey;if(!key)throw new Error('No hay API key de Groq. Ve a Configuración.');const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'llama-3.1-8b-instant',messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:1024})}).catch(e=>{throw new Error('Red bloqueada: '+e.message);});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}const data=await res.json();if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(data.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));return data.choices?.[0]?.message?.content||'';}
-async function groqParseText(ocrText){const key=DB.groqKey;if(!key)throw new Error('Sin API key Groq');const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:\n{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}\nIgnora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.\nTexto:\n${ocrText}\n${knownProds?' Conocidos: '+knownProds:''}`;const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'llama-3.1-8b-instant',messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:2048})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}const data=await res.json();const text=data.choices?.[0]?.message?.content||'';const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();try{return JSON.parse(clean);}catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSON inválido de Groq');}}
+async function callGroq(prompt){const key=DB.groqKey;if(!key)throw new Error('No hay API key de Groq. Ve a Configuración.');const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:1024})}).catch(e=>{throw new Error('Red bloqueada: '+e.message);});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}const data=await res.json();if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(data.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));return data.choices?.[0]?.message?.content||'';}
+async function groqParseText(ocrText){const key=DB.groqKey;if(!key)throw new Error('Sin API key Groq');const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:\n{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}\nIgnora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.\nTexto:\n${ocrText}\n${knownProds?' Conocidos: '+knownProds:''}`;const res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({model:'llama-3.3-70b-versatile',messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:2048})});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Groq HTTP '+res.status);}const data=await res.json();const text=data.choices?.[0]?.message?.content||'';const clean=text.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();try{return JSON.parse(clean);}catch{const m=clean.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('JSON inválido de Groq');}}
 
 // ── PROCESS FILE ──────────────────────────────────────────────
 async function processFile(file){
@@ -505,8 +505,9 @@ async function processFile(file){
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
     if(result.last4&&DB.knowledge.cards[result.last4])result.payer=DB.knowledge.cards[result.last4];
+    // Guardar imagen comprimida en IndexedDB vinculada al ticket
+    if(window._lastTicketB64) await ImgDB.save(result.id, 'data:image/jpeg;base64,'+window._lastTicketB64);
     hideOCRLoading();openTicketEditor(result);
-    if(window._lastTicketB64)currentTicket._imageB64=window._lastTicketB64;
   }catch(err){hideOCRLoading();showToast('Error: '+err.message,5000);console.error('processFile error:',err);openTicketEditor(getEmptyTicket());}
 }
 
@@ -579,14 +580,33 @@ function renderTickets(){
 
 // ── TICKET EDITOR ─────────────────────────────────────────────
 let currentTicket=null,_releerMode=false;
-function openTicketEditor(ticket){currentTicket=JSON.parse(JSON.stringify(ticket));renderTicketEditor();document.getElementById('ticket-editor').style.display='flex';}
+function openTicketEditor(ticket){
+  currentTicket=JSON.parse(JSON.stringify(ticket));
+  renderTicketEditor();
+  document.getElementById('ticket-editor').style.display='flex';
+  // Cargar imagen desde IndexedDB si existe (tickets ya guardados)
+  if(!window._lastTicketB64 && ticket.id){
+    ImgDB.get(ticket.id).then(b64=>{
+      if(b64){
+        window._lastTicketB64=b64.replace('data:image/jpeg;base64,','');
+        // Mostrar miniatura si el editor sigue abierto
+        const thumb=document.getElementById('ticket-thumb');
+        if(thumb){thumb.src=b64;thumb.style.display='block';}
+        // Actualizar botón releer
+        renderTicketEditor();
+      }
+    });
+  }
+}
 
 function renderTicketEditor(){
   const t=currentTicket;
   const errorsHtml=[...(t.errors||[]),...(t.warnings||[])].map(e=>`<div class="error-chip">${e}<button onclick="dismissErrors()">Ignorar</button></div>`).join('');
   const payerBtns=DB.persons.map(p=>`<button onclick="setTicketPayer('${p.id}')" class="payer-btn ${t.payer===p.id?'active':''}" style="--payer-color:${p.color}">${p.name}</button>`).join('');
   document.getElementById('ticket-editor').innerHTML=`
-    <div class="te-header"><button onclick="closeTicketEditor()" class="icon-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><h2>Revisar ticket</h2><button onclick="deleteCurrentTicket()" class="btn-text-danger">Eliminar</button></div>
+    <div class="te-header"><button onclick="closeTicketEditor()" class="icon-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><h2>Revisar ticket</h2>
+      ${window._lastTicketB64?`<img id="ticket-thumb" src="data:image/jpeg;base64,${window._lastTicketB64}" class="ticket-thumb" onclick="showTicketImage()"/>`:`<img id="ticket-thumb" style="display:none" class="ticket-thumb" onclick="showTicketImage()"/>`}
+      <button onclick="deleteCurrentTicket()" class="btn-text-danger">Eliminar</button></div>
     <div class="te-body">
       ${errorsHtml?`<div class="te-section">${errorsHtml}</div>`:''}
       <div class="te-section"><div class="te-section-title">Información</div>
@@ -694,7 +714,7 @@ function saveTicket(){
 function learnFromTicket(t){if(t.last4&&t.payer){DB.knowledge.cards[t.last4]=t.payer;const person=personById(t.payer);if(person){if(!person.cards)person.cards=[];if(!person.cards.includes(t.last4))person.cards.push(t.last4);}}(t.products||[]).forEach(prod=>{const key=normalizeKey(prod.name||'');if(!key)return;const ocrRaw=(prod.rawName||'').trim().toUpperCase();const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};DB.knowledge.products[key]={person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,count:(ex.count||0)+1,category:prod.category,alias:prod.name,ocr_raw:ocrRaw&&!(ex.ocr_raw||[]).includes(ocrRaw)?[...(ex.ocr_raw||[]),ocrRaw]:(ex.ocr_raw||[])};const ocrStripped=ocrRaw.replace(/^\d+\s+/,'');[ocrRaw,ocrStripped].filter(Boolean).forEach(raw=>{const rk=normalizeKey(raw);if(rk&&rk!==key)DB.knowledge.products[rk]={...(DB.knowledge.products[rk]||{}),person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,alias:prod.name,ocr_raw:[raw]};});});}
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;window._lastTicketB64=null;_releerMode=false;}
 function deleteCurrentTicket(){if(!currentTicket)return;window._deleteTicketId=currentTicket.id;const t=currentTicket;openModal(`<div class="modal-title">Eliminar ticket</div><p class="modal-body-text">¿Eliminar el ticket de ${t.store||'este supermercado'}?</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="confirmDeleteTicket()">Eliminar</button></div>`);}
-function confirmDeleteTicket(){const id=window._deleteTicketId;if(!id){closeModal();return;}const t=DB.tickets.find(tk=>tk.id===id);if(t){DB.tickets=DB.tickets.filter(tk=>tk.id!==id);saveDB();}window._deleteTicketId=null;closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen==='tickets'?'tickets':'home');}
+function confirmDeleteTicket(){const id=window._deleteTicketId;if(!id){closeModal();return;}const t=DB.tickets.find(tk=>tk.id===id);if(t){DB.tickets=DB.tickets.filter(tk=>tk.id!==id);saveDB();}ImgDB.delete(id);window._deleteTicketId=null;closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen==='tickets'?'tickets':'home');}
 function openManualTicket(){openTicketEditor(getEmptyTicket());}
 function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEditor(t);return;}const e=DB.expenses.find(x=>x.id===id);if(e)openExpenseEditor(e);}
 
@@ -763,7 +783,7 @@ function renderStats(){
     ${anomalies.length?`<div class="anomalies-list">${anomalies.map(a=>`<div class="anomaly-chip">${a}</div>`).join('')}</div>`:''}
     <div class="recent-label">Despensa estimada</div>${renderInventorySection()}
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
-    ${topProds.length||catSorted.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}${catSorted.length?`<div class="recent-label">Por categoría</div><div class="bar-chart">${catSorted.map(([cat,amt])=>{const ci=EXPENSE_CATS.find(c=>c.id===cat)||{label:cat};return`<div class="bar-row"><div class="bar-name">${ci.label||cat}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(amt/catMax*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${fmt(amt)}</div></div>`;}).join('')}</div>`:''}</details>`:''}`;
+    ${topProds.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}</details>`:''}`;
   setTimeout(()=>{document.querySelectorAll('.inv-archive-btn').forEach(btn=>{btn.onclick=()=>archiveDespensa(btn.dataset.key);});},0);
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
@@ -850,6 +870,16 @@ function toggleBoughtDespensa(key,checked){
   saveDB();
   const row=document.querySelector(`.inv-check[data-key="${key}"]`)?.closest('.inv-row');
   if(row) row.classList.toggle('inv-bought',checked);
+  if(checked) showUndoToast('Marcado como comprado',()=>toggleBoughtDespensa(key,false));
+}
+function showUndoToast(msg,undoFn,dur=4000){
+  document.querySelector('.toast')?.remove();
+  const t=document.createElement('div');
+  t.className='toast toast-undo';
+  t.innerHTML=`<span>${msg}</span><button class="toast-undo-btn">Deshacer</button>`;
+  document.body.appendChild(t);
+  const timer=setTimeout(()=>t.remove(),dur);
+  t.querySelector('.toast-undo-btn').onclick=()=>{clearTimeout(timer);t.remove();undoFn();};
 }
 function archiveDespensa(key,name){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
@@ -985,10 +1015,62 @@ catch(err){const isQ=err.message?.includes('429')||err.message?.includes('quota'
 finally{window._aiSending=false;const msgs=document.getElementById('ai-messages');if(msgs)msgs.scrollTop=msgs.scrollHeight;}}
 function updateAIBadge(){const n=(DB.aiQuestions||[]).filter(q=>!q.answered).length;const b=document.getElementById('ai-badge');if(b){b.style.display=n>0?'flex':'none';b.textContent=n;}}
 
+// ── INDEXEDDB — almacén de imágenes de tickets ────────────────
+const ImgDB = {
+  _db: null,
+  async open(){
+    if(this._db) return this._db;
+    return new Promise((res,rej)=>{
+      const req=indexedDB.open('clarito_imgs',1);
+      req.onupgradeneeded=e=>{e.target.result.createObjectStore('images');};
+      req.onsuccess=e=>{this._db=e.target.result;res(this._db);};
+      req.onerror=()=>rej(req.error);
+    });
+  },
+  async save(ticketId, b64){
+    try{const db=await this.open();const tx=db.transaction('images','readwrite');tx.objectStore('images').put(b64,ticketId);}catch(e){console.warn('ImgDB save error:',e);}
+  },
+  async get(ticketId){
+    try{const db=await this.open();return new Promise((res,rej)=>{const req=db.transaction('images').objectStore('images').get(ticketId);req.onsuccess=()=>res(req.result||null);req.onerror=()=>res(null);});}catch{return null;}
+  },
+  async delete(ticketId){
+    try{const db=await this.open();const tx=db.transaction('images','readwrite');tx.objectStore('images').delete(ticketId);}catch(e){}
+  }
+};
+
+// ── SHARE TARGET — recibir imagen compartida desde galería ────
+async function handleShareTarget(){
+  if(location.search.includes('share-target')||new URLSearchParams(location.search).has('share-target')) return;
+  // Share Target POST: el service worker reenvía el archivo
+  // Sin SW, intentamos leer desde sessionStorage (ver sw approach abajo)
+  // En iOS la única forma fiable es via SW — registramos uno mínimo
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.addEventListener('message', e=>{
+      if(e.data?.type==='share-target-file'&&e.data.b64){
+        const file=b64ToFile(e.data.b64, e.data.name||'ticket.jpg');
+        processFile(file);
+      }
+    });
+  }
+}
+
+function b64ToFile(b64, name){
+  const arr=b64.split(','); const mime=arr[0].match(/:(.*?);/)[1];
+  const bstr=atob(arr[1]); let n=bstr.length; const u8=new Uint8Array(n);
+  while(n--) u8[n]=bstr.charCodeAt(n);
+  return new File([u8],name,{type:mime});
+}
+
+function showTicketImage(){
+  const b64=window._lastTicketB64;if(!b64)return;
+  openModal(`<div style="text-align:center"><img src="data:image/jpeg;base64,${b64}" style="max-width:100%;max-height:70vh;border-radius:var(--rad-sm);object-fit:contain"/></div><div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Cerrar</button></div>`);
+}
+
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
 DB.aiConvMessages=[];
 expireOldTickets();
+handleShareTarget();
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
