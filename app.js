@@ -892,7 +892,7 @@ function sendDespensaToReminders(){
   const encoded=encodeURIComponent(text);
   window.location.href=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encoded}`;
 }
-(key,checked){
+function toggleBoughtDespensa(key,checked){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.knowledge.boughtDespensa) DB.knowledge.boughtDespensa=[];
   if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
