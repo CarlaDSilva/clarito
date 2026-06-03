@@ -34,14 +34,14 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   pointer-events:none;
   z-index:1998;
   opacity:0;
-  animation:haloBloom 3s cubic-bezier(.2,.6,.3,1) 0.5s 1 forwards;
+  animation:haloBloom 5s cubic-bezier(.2,.6,.3,1) 0.5s 1 forwards;
 }
 #splash.hidden .splash-halo{opacity:0 !important;transition:opacity .3s ease;}
 @keyframes logoPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes haloBloom{
   0%  {transform:translate(-50%,-50%) scale(0);   opacity:0}
-  10% {opacity:1}
-  55% {transform:translate(-50%,-50%) scale(1.42);opacity:1}
+  15% {transform:translate(-50%,-50%) scale(0.08);opacity:0.85}
+  70% {transform:translate(-50%,-50%) scale(1.42);opacity:0.9}
   100%{transform:translate(-50%,-50%) scale(1.42);opacity:0}
 }
 .splash-title{font-size:32px;font-weight:800;letter-spacing:-1px;color:#d7dae5}
