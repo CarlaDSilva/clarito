@@ -790,7 +790,14 @@ function renderStats(){
     <div class="recent-label">Gasto este mes por persona</div>
     <div class="persons-stats-grid">${DB.persons.map(p=>`<div class="stat-card stat-card-person" style="--person-color:${p.color}"><div class="stat-label">${p.name}</div><div class="stat-value stat-value-person">${fmt(monthByPerson[p.id]||0)}</div><div class="stat-paid-out">Pagó en caja: ${fmt(monthPaidOut[p.id]||0)}</div></div>`).join('')}</div>
     ${anomalies.length?`<div class="anomalies-list">${anomalies.map(a=>`<div class="anomaly-chip">${a}</div>`).join('')}</div>`:''}
-    <div class="recent-label">Despensa estimada</div>${renderInventorySection()}
+    <div class="recent-label inv-label-row">
+      Despensa estimada
+      <button class="inv-reminders-btn" onclick="sendDespensaToReminders()" title="Enviar a Recordatorios">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Recordatorios
+      </button>
+    </div>
+    ${renderInventorySection()}
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
     ${topProds.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}</details>`:''}`;
   setTimeout(()=>{document.querySelectorAll('.inv-archive-btn').forEach(btn=>{btn.onclick=()=>archiveDespensa(btn.dataset.key);});},0);
@@ -871,7 +878,30 @@ function buildInventoryRows(preds, bought){
     }).join('')}
   `).join('');
 }
-function toggleBoughtDespensa(key,checked){
+function sendDespensaToReminders(){
+  const preds=getPredictions();
+  const bought=new Set(DB.knowledge?.boughtDespensa||[]);
+  // Solo los no comprados, agrupados por supermercado
+  const byStore={};
+  preds.forEach(p=>{
+    const key=normalizeKey(p.name);
+    if(bought.has(key)) return;
+    const s=p.store||'Sin supermercado';
+    if(!byStore[s]) byStore[s]=[];
+    byStore[s].push(p.name);
+  });
+  if(Object.keys(byStore).length===0){showToast('No hay productos pendientes');return;}
+  // Construir texto: "── Gadis ──\nProducto1\nProducto2\n── Lidl ──\nProducto3"
+  const lines=[];
+  Object.entries(byStore).forEach(([store,items])=>{
+    lines.push('── '+store+' ──');
+    items.forEach(name=>lines.push(name));
+  });
+  const text=lines.join('\n');
+  const encoded=encodeURIComponent(text);
+  window.location.href=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encoded}`;
+}
+(key,checked){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.knowledge.boughtDespensa) DB.knowledge.boughtDespensa=[];
   if(checked){if(!DB.knowledge.boughtDespensa.includes(key))DB.knowledge.boughtDespensa.push(key);}
@@ -963,6 +993,7 @@ function renderDevSettings(){return`
     <div class="settings-row" onclick="editKnowledgeProducts()"><div class="settings-label">Productos aprendidos</div><div class="settings-value">${Object.keys(DB.knowledge.products).length}</div><div class="settings-arrow">›</div></div>
     <div class="settings-row" onclick="clearKnowledge()"><div class="settings-label settings-label-danger">Borrar conocimiento IA</div></div>
     <div class="settings-row" onclick="exportData()"><div class="settings-label">Exportar JSON</div><div class="settings-arrow">↓</div></div>
+    <div class="settings-row" onclick="importData()"><div class="settings-label">Importar JSON</div><div class="settings-arrow">↑</div></div>
     <div class="settings-row" onclick="resetAll()"><div class="settings-label settings-label-danger">Borrar todos los datos</div></div>
   </div></div>
   <div class="settings-section"><div class="settings-section-title">Estadísticas</div><div class="settings-group">
@@ -1004,6 +1035,47 @@ function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimie
 function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p class="modal-hint">Obtén tu key en <strong class="text-accent">console.cloud.google.com</strong> → APIs → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p class="modal-hint">Key gratuita en <strong class="text-accent">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function exportData(){const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='clarito-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
+function importData(){
+  const input=document.createElement('input');
+  input.type='file';input.accept='.json,application/json';
+  input.onchange=()=>{
+    const file=input.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=e=>{
+      try{
+        const imported=JSON.parse(e.target.result);
+        // Validación mínima
+        if(!imported.persons||!Array.isArray(imported.tickets)){
+          showToast('Archivo no válido',3000);return;
+        }
+        openModal(`<div class="modal-title">Importar datos</div>
+          <p class="modal-body-text">Se encontraron <strong>${imported.tickets?.length||0} tickets</strong> y <strong>${imported.expenses?.length||0} gastos</strong>.<br><br>¿Quieres reemplazar todos los datos actuales?</p>
+          <div class="modal-actions">
+            <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+            <button class="btn-primary" onclick="confirmImport()">Importar</button>
+          </div>`);
+        window._pendingImport=imported;
+      }catch{showToast('Error al leer el archivo',3000);}
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+function confirmImport(){
+  const imported=window._pendingImport;
+  if(!imported){closeModal();return;}
+  DB=Object.assign({},DB,imported);
+  // Asegurar campos que podrían no estar en exports antiguos
+  if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
+  if(!DB.aiQuestions) DB.aiQuestions=[];
+  DB.aiConvMessages=[];
+  DB.persons.forEach(p=>{if(!p.cards)p.cards=[];});
+  saveDB();
+  window._pendingImport=null;
+  closeModal();
+  showToast('Datos importados correctamente',3000);
+  showScreen('home');
+}
 function resetStatsConfirm(){openModal(`<div class="modal-title">Nuevo mes</div><p class="modal-body-text">Se eliminarán todos los tickets y gastos actuales.</p><label class="modal-checkbox-row"><input type="checkbox" id="keep-despensa" checked> Mantener datos de despensa estimada</label><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="doResetStats()">Empezar mes nuevo</button></div>`);}
 function doResetStats(){const keepDespensa=document.getElementById('keep-despensa')?.checked!==false;if(keepDespensa){const preds=getPredictions();if(!DB.knowledge)DB.knowledge={products:{},cards:{},cachedDespensa:[]};DB.knowledge.cachedDespensa=preds.map(p=>({name:p.name,freq:p.freq,lastDate:new Date().toISOString().slice(0,10)}));}else{if(DB.knowledge)DB.knowledge.cachedDespensa=[];}DB.tickets=[];DB.expenses=[];DB.settlements=[];saveDB();closeModal();showToast('Mes nuevo iniciado');({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[currentScreen]?.();}
 function resetAll(){openModal(`<div class="modal-title">¿Borrar todo?</div><p class="modal-body-text">No se puede deshacer.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="localStorage.clear();location.reload()">Borrar todo</button></div>`);}
@@ -1087,4 +1159,4 @@ setTimeout(()=>{
     if(!DB.visionKey){startSetup();}
     else{document.getElementById('app').style.display='flex';showScreen('home');updateAIBadge();}
   },100);
-},6000);
+},2500);
