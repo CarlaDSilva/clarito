@@ -21,24 +21,28 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .splash-logo-container{position:relative;width:110px;height:110px;display:flex;align-items:center;justify-content:center}
 #splash-logo-wrap{width:110px;height:110px;border-radius:28px;background:linear-gradient(135deg,#1a1535,#2a1f5e);border:1.5px solid rgba(124,110,245,.4);box-shadow:0 8px 40px rgba(124,110,245,.3);display:flex;align-items:center;justify-content:center;animation:logoPop .5s cubic-bezier(.34,1.56,.64,1) both;overflow:hidden;position:relative;z-index:1}
 #splash-logo{width:80px;height:80px;object-fit:contain;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)}
-/* Halo: flash de luz blanca que llena toda la pantalla */
+/* Halo: círculo blanco que nace en el logo y crece hasta cubrir toda la pantalla */
 .splash-halo{display:none}
 .splash-halo:nth-child(1){
   display:block;
   position:fixed;
-  inset:0;
+  width:100vmax;height:100vmax;
+  left:50%;top:50%;
+  transform:translate(-50%,-50%) scale(0);
+  border-radius:50%;
   background:white;
   pointer-events:none;
-  z-index:1999;
+  z-index:1998;
   opacity:0;
-  animation:haloBloom 2.2s ease-out 0.4s 1 forwards;
+  animation:haloBloom 3s cubic-bezier(.2,.6,.3,1) 0.5s 1 forwards;
 }
-#splash.hidden .splash-halo{opacity:0 !important;transition:opacity .2s ease;}
+#splash.hidden .splash-halo{opacity:0 !important;transition:opacity .3s ease;}
 @keyframes logoPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes haloBloom{
-  0%  {opacity:0}
-  18% {opacity:0.92}
-  100%{opacity:0}
+  0%  {transform:translate(-50%,-50%) scale(0);   opacity:0}
+  10% {opacity:1}
+  55% {transform:translate(-50%,-50%) scale(1.42);opacity:1}
+  100%{transform:translate(-50%,-50%) scale(1.42);opacity:0}
 }
 .splash-title{font-size:32px;font-weight:800;letter-spacing:-1px;color:#d7dae5}
 .splash-sub{font-size:14px;color:var(--txt2);letter-spacing:.2px}
