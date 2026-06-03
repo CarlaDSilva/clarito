@@ -916,8 +916,7 @@ function sendDespensaToReminders(){
     items.forEach(name=>lines.push(name));
   });
   const text=lines.join('\n');
-  const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=text&text=${encodeURIComponent(text)}`;
-  // Usar <a> con click fuerza el scheme en iOS PWA mejor que location.href
+  const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encodeURIComponent(text)}`;
   const a=document.createElement('a');
   a.href=url;a.style.display='none';
   document.body.appendChild(a);a.click();
