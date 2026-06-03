@@ -766,14 +766,39 @@ function confirmSettle(){const btn=document.querySelector('.btn-primary[onclick=
 
 // ── STATS ─────────────────────────────────────────────────────
 function renderStats(){
-  const now=new Date();const thisMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;const allT=DB.tickets.filter(t=>t.confirmed);const monthStart=thisMonth+'-01';const monthEnd=new Date(now.getFullYear(),now.getMonth()+1,0).toISOString().slice(0,10);const monthT=allT.filter(t=>t.date&&t.date>=monthStart&&t.date<=monthEnd);const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
-  const monthByPerson={},monthPaidOut={};DB.persons.forEach(p=>{monthByPerson[p.id]=0;monthPaidOut[p.id]=0;});
-  monthT.forEach(t=>{monthPaidOut[t.payer]=(monthPaidOut[t.payer]||0)+(parseFloat(t.total)||0);(t.products||[]).forEach(prod=>{const price=parseFloat(prod.finalPrice||prod.price||0);if(!price)return;if(prod.assignedTo)monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;});});});
-  DB.expenses.filter(e=>e.confirmed&&e.date&&e.date>=monthStart&&e.date<=monthEnd).forEach(e=>{const amt=parseFloat(e.total||0);if(!amt)return;monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;const s1=e.split1??50;DB.persons.forEach((p,i)=>{const pct=i===0?s1:100-s1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*pct/100;});});
-  const catMap={};allT.forEach(t=>(t.products||[]).forEach(p=>{const c=p.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(p.finalPrice||p.price||0);}));DB.expenses.filter(e=>e.confirmed).forEach(e=>{const c=e.category||'otro';catMap[c]=(catMap[c]||0)+parseFloat(e.total||0);});
-  const catSorted=Object.entries(catMap).sort((a,b)=>b[1]-a[1]).slice(0,6);const catMax=catSorted[0]?catSorted[0][1]:1;
-  const storeMap={};allT.forEach(t=>{if(t.store)storeMap[t.store]=(storeMap[t.store]||0)+(parseFloat(t.total)||0);});const storeSorted=Object.entries(storeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  const prodCount={};allT.forEach(t=>(t.products||[]).forEach(p=>{const k=p.name||p.rawName||'';if(!k)return;prodCount[k]=(prodCount[k]||0)+(p.qty||1);}));const topProds=Object.entries(prodCount).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const now=new Date();
+  const thisYear=now.getFullYear(), thisMon=now.getMonth();
+  const allT=DB.tickets.filter(t=>t.confirmed);
+  // Filtrar tickets de este mes de forma robusta
+  const monthT=allT.filter(t=>{
+    if(!t.date) return false;
+    const d=new Date(t.date);
+    return !isNaN(d)&&d.getFullYear()===thisYear&&d.getMonth()===thisMon;
+  });
+  const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
+  const monthByPerson={},monthPaidOut={};
+  DB.persons.forEach(p=>{monthByPerson[p.id]=0;monthPaidOut[p.id]=0;});
+  monthT.forEach(t=>{
+    monthPaidOut[t.payer]=(monthPaidOut[t.payer]||0)+(parseFloat(t.total)||0);
+    (t.products||[]).forEach(prod=>{
+      const price=parseFloat(prod.finalPrice||prod.price||0);
+      if(!price) return;
+      if(prod.assignedTo) monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;
+      else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;});
+    });
+  });
+  DB.expenses.filter(e=>e.confirmed&&e.date).forEach(e=>{
+    const d=new Date(e.date);
+    if(isNaN(d)||d.getFullYear()!==thisYear||d.getMonth()!==thisMon) return;
+    const amt=parseFloat(e.total||0);if(!amt) return;
+    monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;
+    const s1=e.split1??50;
+    DB.persons.forEach((p,i)=>{const pct=i===0?s1:100-s1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*pct/100;});
+  });
+  const storeMap={};allT.forEach(t=>{if(t.store)storeMap[t.store]=(storeMap[t.store]||0)+(parseFloat(t.total)||0);});
+  const storeSorted=Object.entries(storeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const prodCount={};allT.forEach(t=>(t.products||[]).forEach(p=>{const k=p.name||p.rawName||'';if(!k)return;prodCount[k]=(prodCount[k]||0)+(p.qty||1);}));
+  const topProds=Object.entries(prodCount).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const anomalies=detectAnomalies();
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Estadísticas</h1><p>Análisis del hogar</p></div>
@@ -936,21 +961,21 @@ function restoreDespensa(key){
 function getPredictions(){
   const cT=DB.tickets.filter(t=>t.confirmed&&t.date);
   const archived=new Set(DB.knowledge?.archivedDespensa||[]);
+  const bought=new Set(DB.knowledge?.boughtDespensa||[]);
   if(cT.length===0&&DB.knowledge?.cachedDespensa?.length){
     const now=Date.now();
     return DB.knowledge.cachedDespensa
-      .filter(p=>!archived.has(normalizeKey(p.name)))
-      .map(p=>{const lMs=p.lastDate?new Date(p.lastDate).getTime():now;const dS=(now-lMs)/864e5;const dL=Math.max(0,Math.round(p.freq-dS));return{name:p.name,days:dL,freq:p.freq,detail:'Cada ~'+p.freq+'d · hace '+Math.round(dS)+'d'};})
+      .filter(p=>{const k=normalizeKey(p.name);return !archived.has(k)&&!bought.has(k);})
+      .map(p=>{const lMs=p.lastDate?new Date(p.lastDate).getTime():now;const dS=(now-lMs)/864e5;const dL=Math.max(0,Math.round(p.freq-dS));return{name:p.name,days:dL,freq:p.freq,store:p.store||'',detail:'Cada ~'+p.freq+'d · hace '+Math.round(dS)+'d'};})
       .sort((a,b)=>a.days-b.days);
   }
   const ph={};
-  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[],store:t.store||''};ph[k].dates.push(d);if(t.store&&!ph[k].store)ph[k].store=t.store;});});;
+  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k)||bought.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[],store:t.store||''};ph[k].dates.push(d);if(t.store&&!ph[k].store)ph[k].store=t.store;});});
   const now=Date.now();
   return Object.values(ph)
     .filter(v=>v.dates.length>=2)
     .map(item=>{
       item.dates.sort((a,b)=>a-b);
-      // Dedup same-day entries (mismo producto en ticket del mismo día)
       const uniq=[...new Set(item.dates.map(d=>Math.floor(d/864e5)))].map(d=>d*864e5);
       if(uniq.length<2) return null;
       const gaps=[];for(let i=1;i<uniq.length;i++)gaps.push((uniq[i]-uniq[i-1])/864e5);
