@@ -909,18 +909,18 @@ function sendDespensaToReminders(){
     byStore[s].push(p.name);
   });
   if(Object.keys(byStore).length===0){showToast('No hay productos pendientes');return;}
-  // Un recordatorio por producto: "[Lidl] Schweppes pomelo"
-  const lines=[];
-  Object.entries(byStore).forEach(([store,items])=>{
-    items.forEach(name=>lines.push('['+store+'] '+name));
+  // Enviar JSON a Scriptable: [{store, name}, ...]
+  const items=[];
+  Object.entries(byStore).forEach(([store,prods])=>{
+    prods.forEach(name=>items.push({store,name}));
   });
-  const text=lines.join('\n');
-  const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encodeURIComponent(text)}`;
+  const json=JSON.stringify(items);
+  const url=`scriptable:///run?scriptName=Despensa&input=${encodeURIComponent(json)}`;
   const a=document.createElement('a');
   a.href=url;a.style.display='none';
   document.body.appendChild(a);a.click();
   setTimeout(()=>a.remove(),500);
-  showToast('Abriendo Atajos…',2000);
+  showToast('Abriendo Scriptable…',2000);
 }
 function toggleBoughtDespensa(key,checked){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
