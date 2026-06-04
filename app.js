@@ -30,35 +30,97 @@ function hideSplash(){const s=document.getElementById('splash');s.classList.add(
 let currentScreen='home';
 function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
-let setupStep=0,setupPersonCount=2;
-function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=0;renderSetupStep();}
+let setupStep=-1,setupPersonCount=2;
+// setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
+function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=-1;renderSetupStep();}
 function renderSetupStep(){
   const el=document.getElementById('setup-content');
-  const dots=Array.from({length:4},(_,i)=>`<div class="setup-dot ${i===setupStep?'active':i<setupStep?'done':''}"></div>`).join('');
-  let html=`<div class="setup-progress">${dots}</div>`;
-  if(setupStep===0){
-    html+=`<h2>Bienvenido a Clarito</h2><p>Necesitas dos claves gratuitas para que Clarito funcione.</p>
+  // Dots solo para pasos 0-3
+  const dots=setupStep>=0?Array.from({length:4},(_,i)=>`<div class="setup-dot ${i===setupStep?'active':i<setupStep?'done':''}"></div>`).join(''):'';
+  const dotsHtml=dots?`<div class="setup-progress">${dots}</div>`:'';
+  const backBtn=setupStep>=-1&&setupStep>-1?`<button class="btn-secondary setup-back" onclick="setupBack()" style="margin-top:10px">← Atrás</button>`:'';
+  let html=dotsHtml;
+  if(setupStep===-1){
+    html+=`<h2>Bienvenido a Clarito</h2>
+      <p>¿Es tu primera vez o ya tienes datos guardados?</p>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+        <button class="btn-primary" onclick="setupStep=0;renderSetupStep()">Soy nuevo usuario →</button>
+        <button class="btn-secondary" onclick="setupImportFlow()">Tengo un JSON con mis datos</button>
+      </div>`;
+  } else if(setupStep===0){
+    html+=`<h2>Claves de acceso</h2><p>Necesitas dos claves gratuitas para que Clarito funcione.</p>
       <div class="field-row"><label class="field-label">Google Cloud Vision Key <span class="label-hint">(leer tickets)</span></label><input type="password" id="s-visionkey" placeholder="AIzaSy..." value="${DB.visionKey||''}"/></div>
       <p class="setup-link-hint"><a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="link-accent" onclick="window.open(this.href,'_blank');return false">console.cloud.google.com</a> → APIs → Credenciales</p>
       <div class="field-row"><label class="field-label">Groq Key <span class="label-hint">(asistente IA)</span></label><input type="password" id="s-groqkey" placeholder="gsk_..." value="${DB.groqKey||''}"/></div>
       <p class="setup-link-hint"><a href="https://console.groq.com/keys" target="_blank" class="link-accent" onclick="window.open(this.href,'_blank');return false">console.groq.com</a> → API Keys (gratis)</p>
-      <button class="btn-primary" onclick="setupNext0()">Continuar →</button>`;
+      <button class="btn-primary" onclick="setupNext0()">Continuar →</button>${backBtn}`;
   } else if(setupStep===1){
     html+=`<h2>¿Cuántas personas?</h2><p>¿Cuántas personas comparten gastos en este hogar?</p>
       <div class="person-count-row">${[2,3,4,5].map(n=>`<button onclick="setupPersonCount=${n};document.querySelectorAll('.pc-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active')" class="btn-secondary pc-btn ${setupPersonCount===n?'active':''}">${n} personas</button>`).join('')}</div>
-      <button class="btn-primary" onclick="setupNext1()">Continuar →</button>`;
+      <button class="btn-primary" onclick="setupNext1()">Continuar →</button>${backBtn}`;
   } else if(setupStep===2){
     while(DB.persons.length<setupPersonCount) DB.persons.push({id:'p'+(DB.persons.length+1),name:'Persona '+(DB.persons.length+1),color:PRESET_COLORS[DB.persons.length%PRESET_COLORS.length],cards:[]});
     DB.persons=DB.persons.slice(0,setupPersonCount);
     html+=`<h2>Nombres y colores</h2><p>Personaliza cada persona del hogar.</p>
       ${DB.persons.map((p,i)=>`<div class="setup-person-card"><div class="field-row"><label class="field-label">Nombre persona ${i+1}</label><input id="s-name-${i}" value="${p.name.startsWith('Persona ')?'':p.name}" placeholder="Nombre..."/></div><div class="field-row"><label class="field-label">Color</label><div class="color-picker-row" id="cp-${i}">${PRESET_COLORS.map(c=>`<div class="color-swatch ${p.color===c?'selected':''}" style="background:${c}" onclick="pickColor(${i},'${c}',this)"></div>`).join('')}</div></div></div>`).join('')}
-      <button class="btn-primary setup-continue" onclick="setupNext2()">Continuar →</button>`;
+      <button class="btn-primary setup-continue" onclick="setupNext2()">Continuar →</button>${backBtn}`;
   } else {
     html+=`<h2>¡Todo listo!</h2><p>Clarito configurado para <strong>${DB.persons.length} personas</strong>.</p>
       <div class="setup-summary">${DB.persons.map(p=>`<div class="setup-summary-row"><div class="person-dot" style="background:${p.color}"></div><div class="setup-summary-name">${p.name}</div></div>`).join('')}</div>
       <button class="btn-primary" onclick="finishSetup()">Empezar a usar Clarito</button>`;
   }
   el.innerHTML=html;
+}
+function setupBack(){if(setupStep>0)setupStep--;else setupStep=-1;renderSetupStep();}
+function setupImportFlow(){
+  // Mostrar selector de archivo JSON dentro del setup
+  const el=document.getElementById('setup-content');
+  el.innerHTML=`
+    <h2>Importar datos</h2>
+    <p>Selecciona el archivo JSON exportado desde Clarito.</p>
+    <div class="upload-zone" onclick="document.getElementById('setup-import-input').click()" style="margin:16px 0;cursor:pointer">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 16V8m0 0l-3 3m3-3l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 15v3a2 2 0 002 2h14a2 2 0 002-2v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <div style="font-size:14px;color:var(--txt2);margin-top:6px">Toca para seleccionar archivo</div>
+    </div>
+    <input type="file" id="setup-import-input" accept=".json,application/json" style="display:none" onchange="setupImportFile(this)"/>
+    <button class="btn-secondary" onclick="setupStep=-1;renderSetupStep()" style="margin-top:8px">← Atrás</button>`;
+}
+function setupImportFile(input){
+  const file=input.files[0];if(!file)return;
+  const r=new FileReader();
+  r.onload=e=>{
+    try{
+      const data=JSON.parse(e.target.result);
+      const tickets=(data.tickets||[]).length;
+      const expenses=(data.expenses||[]).length;
+      const persons=(data.persons||[]).length;
+      if(!persons){showToast('JSON no válido');return;}
+      const el=document.getElementById('setup-content');
+      el.innerHTML=`
+        <h2>Datos encontrados</h2>
+        <div class="setup-summary" style="margin:16px 0">
+          <div class="setup-summary-row"><span style="color:var(--txt2)">Personas</span><strong>${persons}</strong></div>
+          <div class="setup-summary-row"><span style="color:var(--txt2)">Tickets</span><strong>${tickets}</strong></div>
+          <div class="setup-summary-row"><span style="color:var(--txt2)">Gastos manuales</span><strong>${expenses}</strong></div>
+        </div>
+        <p style="font-size:13px;color:var(--txt2)">Las claves API no se incluyen en el JSON — tendrás que introducirlas después en Ajustes.</p>
+        <button class="btn-primary" onclick="setupImportConfirm(${JSON.stringify(JSON.stringify(data)).replace(/</g,'&lt;')})">Importar estos datos →</button>
+        <button class="btn-secondary" onclick="setupStep=-1;renderSetupStep()" style="margin-top:10px">← Atrás</button>`;
+      window._setupImportData=data;
+    }catch{showToast('Error leyendo el archivo');}
+  };
+  r.readAsText(file);
+}
+function setupImportConfirm(){
+  const data=window._setupImportData;if(!data)return;
+  const vk=DB.visionKey;const gk=DB.groqKey;
+  DB=Object.assign({},DB,data);
+  if(vk)DB.visionKey=vk;if(gk)DB.groqKey=gk;
+  saveDB();
+  document.getElementById('setup-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  showScreen('home');
+  showToast('¡Datos importados correctamente!');
 }
 function pickColor(idx,color,el){DB.persons[idx].color=color;document.querySelectorAll(`#cp-${idx} .color-swatch`).forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
 function setupNext0(){const vk=document.getElementById('s-visionkey').value.trim();const gk=document.getElementById('s-groqkey').value.trim();if(!vk){showToast('Introduce tu Google Vision Key');return;}DB.visionKey=vk;S.set('visionKey',vk);DB.groqKey=gk;S.set('groqKey',gk);setupStep=1;renderSetupStep();}
