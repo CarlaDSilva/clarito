@@ -436,7 +436,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   .empty-state p,.modal-title{font-size:16px}
   .settings-row-label{font-size:16px}
   /* Contenido interior con padding generoso */
-  #view{padding:0 24px}
+  #view{padding:0 24px 120px}
   /* Tickets en 2 columnas */
   .tickets-list{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 0 16px}
   .ticket-row{margin:0}
