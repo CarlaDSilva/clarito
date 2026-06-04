@@ -20,7 +20,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 #splash.hidden{opacity:0;pointer-events:none}
 .splash-logo-container{position:relative;width:110px;height:110px;display:flex;align-items:center;justify-content:center}
 #splash-logo-wrap{width:110px;height:110px;border-radius:28px;background:linear-gradient(135deg,#1a1535,#2a1f5e);border:1.5px solid rgba(124,110,245,.4);box-shadow:0 8px 40px rgba(124,110,245,.3);display:flex;align-items:center;justify-content:center;animation:logoPop .5s cubic-bezier(.34,1.56,.64,1) both;overflow:hidden}
-#splash-logo{width:80px;height:80px;object-fit:contain;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg)}
+#splash-logo{width:80px;height:80px;object-fit:contain;filter:none}
 .splash-halo{display:none}
 .splash-title{font-size:32px;font-weight:800;letter-spacing:-1px;color:#d7dae5}
 .splash-sub{font-size:14px;color:var(--txt2);letter-spacing:.2px}
@@ -43,7 +43,7 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .screen-header h1{font-size:22px;font-weight:700;letter-spacing:-.3px}
 .screen-header p{font-size:13px;color:var(--txt2);margin-top:3px}
 .header-brand{display:flex;align-items:flex-end;gap:12px}
-.header-logo{width:44px;height:44px;border-radius:12px;object-fit:cover;filter:invert(1) brightness(0.87) saturate(0.15) hue-rotate(210deg);padding-bottom:2px}
+.header-logo{width:44px;height:44px;border-radius:12px;object-fit:cover;filter:none;padding-bottom:2px}
 
 /* ── CARDS ── */
 .card{background:var(--bg2);border:1px solid var(--brd);border-radius:var(--rad);padding:16px;margin:0 0 12px}
