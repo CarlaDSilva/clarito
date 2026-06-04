@@ -286,7 +286,6 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 
 /* ── SETTINGS ── */
 .settings-section{margin-bottom:24px}
-.settings-section:first-child{padding-top:24px}
 .settings-section{padding:0}
 .settings-section-title{font-size:11px;color:var(--txt2);text-transform:uppercase;letter-spacing:.7px;padding:0 20px 8px;font-weight:600}
 .settings-group{background:var(--bg1)}
