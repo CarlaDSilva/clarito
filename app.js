@@ -1119,7 +1119,7 @@ function getPredictions(){
 function renderSettings(){
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><div class="header-brand"><img src="icon.png" class="header-logo" onclick="onLogoTap()" onerror="this.style.display='none'"/><h1>Configuración</h1></div></div>
-    <div class="settings-section"><div class="settings-section-title">Personas (${DB.persons.length})</div>
+    <div class="settings-section" style="padding-top:24px"><div class="settings-section-title">Personas (${DB.persons.length})</div>
       <div class="settings-group">
         ${DB.persons.map((p,i)=>`<div class="settings-row" onclick="editPerson(${i})"><div class="settings-icon" style="background:${p.color}"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></div><div class="settings-label">${p.name}</div><div class="settings-value">${p.cards.length} tarjeta(s)</div><div class="settings-arrow">›</div></div>`).join('')}
         <div class="settings-row" onclick="addPerson()"><div class="settings-icon settings-icon-add"><svg viewBox="0 0 24 24" fill="none" stroke="var(--txt1)" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div><div class="settings-label settings-label-accent">Añadir persona</div></div>
