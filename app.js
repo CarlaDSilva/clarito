@@ -1240,7 +1240,8 @@ handleShareTarget();
 setTimeout(()=>{
   hideSplash();
   setTimeout(()=>{
-    if(!DB.visionKey){startSetup();}
+    const hasData=DB.tickets.length>0||(DB.persons&&DB.persons.some(p=>!p.name.startsWith('Persona ')));
+    if(!DB.visionKey&&!hasData){startSetup();}
     else{document.getElementById('app').style.display='flex';showScreen('home');updateAIBadge();}
   },100);
 },2500);
