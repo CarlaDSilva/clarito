@@ -426,6 +426,13 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   input,textarea,select{font-size:17px;padding:13px 18px}
   .btn-primary,.btn-secondary,.btn-danger{font-size:17px;padding:15px 24px}
   .section-title{font-size:17px}
+  /* Textos secundarios y pequeños */
+  .ticket-first-prod,.label-hint,.field-label,.ocr-status{font-size:14px}
+  .nav-btn span{font-size:14px}
+  .price-unit-val{font-size:13px}
+  .ticket-date,.fmtDate,.settings-row-desc{font-size:14px}
+  .inv-name,.inv-days{font-size:15px}
+  .ai-msg{font-size:16px}
   /* Contenido interior con padding generoso */
   #view{padding:0 24px}
   /* Tickets en 2 columnas */
@@ -437,7 +444,6 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   .product-price-input{font-size:22px;width:80px}
   /* Nav */
   .nav-btn svg{width:28px;height:28px}
-  .nav-btn span{font-size:13px}
   .nav-btn{padding:4px 20px}
   /* Balance */
   .balance-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -447,9 +453,11 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   /* Botón IA y toast pegados al borde derecho real */
   .ai-chat-btn{bottom:100px;right:24px}
   .toast{bottom:110px}
-  /* Splash más grande */
+  /* Splash — centrado y cuadrado */
+  #splash{gap:24px}
+  .splash-logo-container{width:160px;height:160px}
   #splash-logo-wrap{width:160px;height:160px;border-radius:38px}
   #splash-logo{width:120px;height:120px}
-  .splash-title{font-size:36px}
-  .splash-sub{font-size:18px}
+  .splash-title{font-size:42px}
+  .splash-sub{font-size:19px}
 }
