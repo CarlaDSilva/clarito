@@ -909,11 +909,10 @@ function sendDespensaToReminders(){
     byStore[s].push(p.name);
   });
   if(Object.keys(byStore).length===0){showToast('No hay productos pendientes');return;}
-  // Construir texto: "── Gadis ──\nProducto1\nProducto2\n── Lidl ──\nProducto3"
+  // Un recordatorio por producto: "[Lidl] Schweppes pomelo"
   const lines=[];
   Object.entries(byStore).forEach(([store,items])=>{
-    lines.push('── '+store+' ──');
-    items.forEach(name=>lines.push(name));
+    items.forEach(name=>lines.push('['+store+'] '+name));
   });
   const text=lines.join('\n');
   const url=`shortcuts://run-shortcut?name=Despensa%20Clarito&input=${encodeURIComponent(text)}`;
