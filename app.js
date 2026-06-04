@@ -5,10 +5,10 @@
 const S={get(k){try{const v=localStorage.getItem('clarito_'+k);return v?JSON.parse(v):null}catch{return null}},set(k,v){localStorage.setItem('clarito_'+k,JSON.stringify(v))}};
 const PRESET_COLORS=['#ea580c','#c2410c','#a855f7','#ec4899','#f9a8d4','#38bdf8','#22c55e','#ef4444','#3b82f6','#eab308','#14b8a6','#e879b0','#fce7f3'];
 
-let DB={apiKey:'',ocrKey:'helloworld',visionKey:'',groqKey:'',gistToken:'',gistId:'',groqStats:{calls:0,firstCall:null,tokensUsed:0},devMode:false,visionStats:{calls:0,firstCall:null},persons:[{id:'p1',name:'Persona 1',color:'#7c6ef5',cards:[]},{id:'p2',name:'Persona 2',color:'#3ecf8e',cards:[]}],tickets:[],expenses:[],settlements:[],knowledge:{products:{},cards:{}},aiQuestions:[],aiConvMessages:[]};
+let DB={apiKey:'',ocrKey:'helloworld',visionKey:'',groqKey:'',gistToken:'',gistId:'',cloudinaryCloud:'',cloudinaryPreset:'',cloudinaryApiKey:'',cloudinarySecret:'',groqStats:{calls:0,firstCall:null,tokensUsed:0},devMode:false,visionStats:{calls:0,firstCall:null},persons:[{id:'p1',name:'Persona 1',color:'#7c6ef5',cards:[]},{id:'p2',name:'Persona 2',color:'#3ecf8e',cards:[]}],tickets:[],expenses:[],settlements:[],knowledge:{products:{},cards:{}},aiQuestions:[],aiConvMessages:[]};
 
 function loadDB(){const saved=S.get('db');if(saved)DB=Object.assign({},DB,saved);DB.ocrKey=S.get('ocrKey')||DB.ocrKey||'helloworld';DB.visionKey=S.get('visionKey')||DB.visionKey||'';DB.groqKey=S.get('groqKey')||DB.groqKey||'';try{const gs=S.get('groqStats');if(gs)DB.groqStats=JSON.parse(gs);}catch{}try{const vs=S.get('visionStats');if(vs)DB.visionStats=JSON.parse(vs);}catch{}DB.devMode=S.get('devMode')||false;if(!DB.knowledge)DB.knowledge={products:{},cards:{}};if(!DB.aiQuestions)DB.aiQuestions=[];if(!DB.aiConvMessages)DB.aiConvMessages=[];DB.persons.forEach(p=>{if(!p.cards)p.cards=[];});try{const settledIds=S.get('settledTicketIds')||[];if(settledIds.length>0){const idSet=new Set(settledIds);DB.tickets.forEach(t=>{if(idSet.has(t.id))t.settled=true;});}}catch(e){}}
-function expireOldTickets(){const now=new Date();const cutoff=new Date(now.getFullYear(),now.getMonth()-1,now.getDate()).toISOString().slice(0,10);const before=DB.tickets.length;DB.tickets=DB.tickets.filter(t=>{const d=t.createdAt||t.date;return !d||d>=cutoff;});if(DB.tickets.length<before)saveDB();}
+function expireOldTickets(){const now=new Date();const cutoff=new Date(now.getTime()-60*24*60*60*1000).toISOString().slice(0,10);const before=DB.tickets.length;const expired=DB.tickets.filter(t=>{const d=t.createdAt||t.date;return d&&d<cutoff;});expired.forEach(t=>{ImgDB.delete(t.id);CloudImg.delete(t.id);});DB.tickets=DB.tickets.filter(t=>{const d=t.createdAt||t.date;return !d||d>=cutoff;});if(DB.tickets.length<before)saveDB();}
 function saveDB(){try{S.set('db',JSON.parse(JSON.stringify(DB)));}catch(e){console.error('saveDB error:',e);}}
 
 const fmt=n=>isNaN(n)||n==null?'0,00 €':Number(n).toFixed(2).replace('.',',')+' €';
@@ -617,7 +617,15 @@ async function processFile(file){
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
     if(result.last4&&DB.knowledge.cards[result.last4])result.payer=DB.knowledge.cards[result.last4];
     // Guardar imagen comprimida en IndexedDB vinculada al ticket
-    if(window._lastTicketB64) await ImgDB.save(result.id, 'data:image/jpeg;base64,'+window._lastTicketB64);
+    if(window._lastTicketB64){
+      await ImgDB.save(result.id, 'data:image/jpeg;base64,'+window._lastTicketB64);
+      // Upload to Cloudinary if configured
+      const cUrl=await CloudImg.upload(result.id, window._lastTicketB64);
+      if(cUrl){
+        const t=DB.tickets.find(x=>x.id===result.id);
+        if(t){t.imgUrl=cUrl;saveDB();}
+      }
+    }
     hideOCRLoading();openTicketEditor(result);
   }catch(err){hideOCRLoading();showToast('Error: '+err.message,5000);console.error('processFile error:',err);openTicketEditor(getEmptyTicket());}
 }
@@ -700,6 +708,12 @@ function openTicketEditor(ticket){
   document.getElementById('ticket-editor').style.display='flex';
   // Cargar imagen desde IndexedDB si existe (tickets ya guardados)
   if(!window._lastTicketB64 && ticket.id){
+    // Try Cloudinary URL first if ticket has one
+    if(ticket.imgUrl){
+      window._lastTicketB64=null; // will use URL directly
+      const thumb=document.getElementById('ticket-thumb');
+      if(thumb){thumb.src=ticket.imgUrl;thumb.style.display='block';}
+    }
     ImgDB.get(ticket.id).then(b64=>{
       if(b64){
         window._lastTicketB64=b64.replace('data:image/jpeg;base64,','');
@@ -828,7 +842,7 @@ function saveTicket(){
 function learnFromTicket(t){if(t.last4&&t.payer){DB.knowledge.cards[t.last4]=t.payer;const person=personById(t.payer);if(person){if(!person.cards)person.cards=[];if(!person.cards.includes(t.last4))person.cards.push(t.last4);}}(t.products||[]).forEach(prod=>{const key=normalizeKey(prod.name||'');if(!key)return;const ocrRaw=(prod.rawName||'').trim().toUpperCase();const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};DB.knowledge.products[key]={person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,count:(ex.count||0)+1,category:prod.category,alias:prod.name,ocr_raw:ocrRaw&&!(ex.ocr_raw||[]).includes(ocrRaw)?[...(ex.ocr_raw||[]),ocrRaw]:(ex.ocr_raw||[])};const ocrStripped=ocrRaw.replace(/^\d+\s+/,'');[ocrRaw,ocrStripped].filter(Boolean).forEach(raw=>{const rk=normalizeKey(raw);if(rk&&rk!==key)DB.knowledge.products[rk]={...(DB.knowledge.products[rk]||{}),person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,alias:prod.name,ocr_raw:[raw]};});});}
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;window._lastTicketB64=null;_releerMode=false;}
 function deleteCurrentTicket(){if(!currentTicket)return;window._deleteTicketId=currentTicket.id;const t=currentTicket;openModal(`<div class="modal-title">Eliminar ticket</div><p class="modal-body-text">¿Eliminar el ticket de ${t.store||'este supermercado'}?</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="confirmDeleteTicket()">Eliminar</button></div>`);}
-function confirmDeleteTicket(){const id=window._deleteTicketId;if(!id){closeModal();return;}const t=DB.tickets.find(tk=>tk.id===id);if(t){DB.tickets=DB.tickets.filter(tk=>tk.id!==id);saveDB();}ImgDB.delete(id);window._deleteTicketId=null;closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen==='tickets'?'tickets':'home');}
+function confirmDeleteTicket(){const id=window._deleteTicketId;if(!id){closeModal();return;}const t=DB.tickets.find(tk=>tk.id===id);if(t){DB.tickets=DB.tickets.filter(tk=>tk.id!==id);saveDB();}ImgDB.delete(id);CloudImg.delete(id);window._deleteTicketId=null;closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen==='tickets'?'tickets':'home');}
 function openManualTicket(){openTicketEditor(getEmptyTicket());}
 function editItem(id){const t=DB.tickets.find(x=>x.id===id);if(t){openTicketEditor(t);return;}const e=DB.expenses.find(x=>x.id===id);if(e)openExpenseEditor(e);}
 
@@ -876,7 +890,7 @@ function renderBalance(){
     ${settlements.length===0?`<div class="empty-state"><p>Sin liquidaciones todavía</p></div>`:settlements.map(s=>`<div class="history-settle"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><div class="settle-date">${fmtDate(s.date)}</div><div class="settle-info">${s.msg}</div></div>`).join('')}`;
   applyReadOnlyUI();
 }
-function settleAccounts(){const {owes,amount}=calcBalance();if(amount<0.01){showToast('No hay deuda que saldar');return;}openModal(`<div class="modal-title">¿Está todo Clarito?</div><p class="modal-body-text">Se registrará la liquidación a día de hoy.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="confirmSettle()">Confirmar</button></div>`);}
+function settleAccounts(){if(GistSync.isReadOnly()){showToast('Modo solo lectura');return;}const {owes,amount}=calcBalance();if(amount<0.01){showToast('No hay deuda que saldar');return;}openModal(`<div class="modal-title">¿Está todo Clarito?</div><p class="modal-body-text">Se registrará la liquidación a día de hoy.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="confirmSettle()">Confirmar</button></div>`);}
 function confirmSettle(){const btn=document.querySelector('.btn-primary[onclick="confirmSettle()"]');if(btn){btn.disabled=true;btn.style.opacity='0.5';}const {owes,amount}=calcBalance();if(amount<0.01){closeModal();return;}const creditor=DB.persons.find(p=>p.id!==owes);if(!owes||!creditor){closeModal();return;}DB.settlements.push({id:uid(),date:new Date().toISOString(),msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor.name}`,amount,owes});DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});S.set('settledTicketIds',DB.tickets.filter(t=>t.settled).map(t=>t.id));saveDB();closeModal();showToast('Todo está Clarito',3000);currentScreen='balance';renderBalance();}
 
 // ── STATS ─────────────────────────────────────────────────────
@@ -998,17 +1012,11 @@ function buildInventoryRows(preds, bought){
         const key=normalizeKey(p.name);
         const isBought=bought.has(key);
         return`<div class="inv-row ${isBought?'inv-bought':''}">
-          <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)" ${GistSync.isReadOnly()?'disabled':''}/>
+          ${RO?'':`<input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)"/>`}
           <div class="inv-name">${p.name}</div>
           <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${barW};background:${col}"></div></div>
           <div class="inv-days">~${p.days}d</div>
-          <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar" ${GistSync.isReadOnly()?'style="display:none"':''} >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-              <line x1="1" y1="1" x2="23" y2="23"/>
-            </svg>
-          </button>
+          ${RO?'':`<button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button>`}
         </div>`;
       }).join('')}
     </div>
@@ -1128,6 +1136,13 @@ function renderDevSettings(){return`
     ${DB.gistId?`<div class="settings-row" onclick="gistActualizar()"><div class="settings-label">Sincronizar ahora</div><div class="settings-arrow">↻</div></div>`:''}
     <div class="settings-row"><div class="settings-label" style="color:var(--txt3);font-size:12px">${GistSync.isAdmin()?'✓ Modo admin — lectura y escritura':DB.gistId?'👁 Modo solo lectura':'Sin configurar'}</div></div>
   </div></div>
+  <div class="settings-section"><div class="settings-section-title">Imágenes — Cloudinary</div><div class="settings-group">
+    <div class="settings-row" onclick="editCloudField('cloudinaryCloud','Cloud Name','dxyz123...')"><div class="settings-label">Cloud Name</div><div class="settings-value">${DB.cloudinaryCloud||'No configurado'}</div><div class="settings-arrow">›</div></div>
+    <div class="settings-row" onclick="editCloudField('cloudinaryPreset','Upload Preset','mi-preset...')"><div class="settings-label">Upload Preset</div><div class="settings-value">${DB.cloudinaryPreset||'No configurado'}</div><div class="settings-arrow">›</div></div>
+    <div class="settings-row" onclick="editCloudField('cloudinaryApiKey','API Key','123456789...')"><div class="settings-label">API Key</div><div class="settings-value">${DB.cloudinaryApiKey?'•••'+DB.cloudinaryApiKey.slice(-4):'No configurado'}</div><div class="settings-arrow">›</div></div>
+    <div class="settings-row" onclick="editCloudSecret()"><div class="settings-label">API Secret</div><div class="settings-value">${DB.cloudinarySecret?'•••'+DB.cloudinarySecret.slice(-4):'No configurado'}</div><div class="settings-arrow">›</div></div>
+    <div class="settings-row"><div class="settings-label" style="color:var(--txt3);font-size:12px">${CloudImg._hasConfig()?'✓ Configurado — fotos en la nube':'Sin configurar — fotos solo locales'}</div></div>
+  </div></div>
   <div class="settings-section"><div class="settings-section-title">APIs</div><div class="settings-group">
     <div class="settings-row" onclick="editVisionKey()"><div class="settings-icon settings-icon-vision"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3M7 12h3M7 16h3M14 8h3M14 12h3M14 16h3"/></svg></div><div class="settings-label">Google Vision Key</div><div class="settings-value">${DB.visionKey?'•••'+DB.visionKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
     ${DB.visionKey?`<div class="settings-row" onclick="showVisionStats()"><div class="settings-icon settings-icon-vision-stats"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg></div><div class="settings-label">Uso de Vision</div><div class="settings-value">${DB.visionStats?.calls||0} lecturas</div><div class="settings-arrow">›</div></div>`:''}
@@ -1150,6 +1165,31 @@ function renderDevSettings(){return`
   <div class="settings-action-row"><button class="btn-secondary btn-full" onclick="gistActualizar()">Actualizar</button></div>
   <div class="settings-action-row"><button class="btn-secondary btn-full btn-muted" onclick="DB.devMode=false;S.set('devMode',false);saveDB();renderSettings();showToast('Modo desarrollador desactivado')">Ocultar opciones de desarrollador</button></div>`;}
 
+function editCloudField(field, label, placeholder){
+  openModal(`<div class="modal-title">${label}</div>
+    <input id="cloud-field-input" placeholder="${placeholder}" value="${DB[field]||''}" style="margin:12px 0"/>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-primary" onclick="saveCloudField('${field}')">Guardar</button>
+    </div>`);
+}
+function saveCloudField(field){
+  const v=document.getElementById('cloud-field-input').value.trim();
+  DB[field]=v;saveDB();closeModal();renderSettings();
+}
+function editCloudSecret(){
+  openModal(`<div class="modal-title">API Secret</div>
+    <p class="modal-body-text" style="font-size:13px">Necesario para eliminar fotos. No se exporta ni se sube al Gist.</p>
+    <input type="password" id="cloud-secret-input" placeholder="abc123..." value="${DB.cloudinarySecret||''}" style="margin:12px 0"/>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-primary" onclick="saveCloudSecret()">Guardar</button>
+    </div>`);
+}
+function saveCloudSecret(){
+  const v=document.getElementById('cloud-secret-input').value.trim();
+  DB.cloudinarySecret=v;saveDB();closeModal();renderSettings();
+}
 function editGistToken(){
   openModal(`<div class="modal-title">GitHub Token</div>
     <p class="modal-body-text" style="font-size:13px">Token con scope <strong>gist</strong>. Solo necesario para escribir datos (modo admin).</p>
@@ -1218,6 +1258,8 @@ function exportData(){
   delete exp.groqKey;
   delete exp.gistToken;
   delete exp.apiKey;
+  delete exp.cloudinarySecret;
+  delete exp.cloudinaryApiKey;
   delete exp.aiConvMessages;
   const b=new Blob([JSON.stringify(exp,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);
@@ -1288,7 +1330,7 @@ catch(err){const isQ=err.message?.includes('429')||err.message?.includes('quota'
 finally{window._aiSending=false;const msgs=document.getElementById('ai-messages');if(msgs)msgs.scrollTop=msgs.scrollHeight;}}
 function updateAIBadge(){const n=(DB.aiQuestions||[]).filter(q=>!q.answered).length;const b=document.getElementById('ai-badge');if(b){b.style.display=n>0?'flex':'none';b.textContent=n;}}
 
-// ── INDEXEDDB — almacén de imágenes de tickets ────────────────
+// ── INDEXEDDB — caché local de imágenes ───────────────────────
 const ImgDB = {
   _db: null,
   async open(){
@@ -1308,6 +1350,54 @@ const ImgDB = {
   },
   async delete(ticketId){
     try{const db=await this.open();const tx=db.transaction('images','readwrite');tx.objectStore('images').delete(ticketId);}catch(e){}
+  }
+};
+
+// ── CLOUDINARY — almacén remoto de imágenes ───────────────────
+const CloudImg = {
+  _hasConfig(){ return !!(DB.cloudinaryCloud && DB.cloudinaryPreset); },
+
+  async upload(ticketId, b64jpeg){
+    if(!this._hasConfig()) return null;
+    try{
+      const form=new FormData();
+      form.append('file','data:image/jpeg;base64,'+b64jpeg);
+      form.append('upload_preset', DB.cloudinaryPreset);
+      form.append('public_id', 'clarito_'+ticketId);
+      form.append('folder','clarito');
+      const res=await fetch(`https://api.cloudinary.com/v1_1/${DB.cloudinaryCloud}/image/upload`,{method:'POST',body:form});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data=await res.json();
+      return data.secure_url||null;
+    }catch(e){console.warn('Cloudinary upload error:',e.message);return null;}
+  },
+
+  async delete(ticketId){
+    if(!this._hasConfig()||!DB.cloudinarySecret) return;
+    try{
+      const publicId='clarito/clarito_'+ticketId;
+      const ts=Math.round(Date.now()/1000);
+      // Signature: SHA1 of "public_id=X&timestamp=T" + secret
+      // Can't do SHA1 in browser without crypto subtle — use destroy via unsigned if allowed
+      // Use Cloudinary unsigned delete with delete_token not available
+      // Best approach: store public_id in ticket and use Admin API via fetch with basic auth
+      const str=`public_id=${publicId}&timestamp=${ts}${DB.cloudinarySecret}`;
+      const msgBuffer=new TextEncoder().encode(str);
+      const hashBuffer=await crypto.subtle.digest('SHA-1',msgBuffer);
+      const sig=Array.from(new Uint8Array(hashBuffer)).map(b=>b.toString(16).padStart(2,'0')).join('');
+      const form=new FormData();
+      form.append('public_id',publicId);
+      form.append('timestamp',ts);
+      form.append('api_key',DB.cloudinaryApiKey||'');
+      form.append('signature',sig);
+      await fetch(`https://api.cloudinary.com/v1_1/${DB.cloudinaryCloud}/image/destroy`,{method:'POST',body:form});
+    }catch(e){console.warn('Cloudinary delete error:',e.message);}
+  },
+
+  async getUrl(ticketId){
+    if(!this._hasConfig()) return null;
+    // Construct URL directly — no need for API call
+    return `https://res.cloudinary.com/${DB.cloudinaryCloud}/image/upload/clarito/clarito_${ticketId}.jpg`;
   }
 };
 
@@ -1335,6 +1425,12 @@ function b64ToFile(b64, name){
 }
 
 function showTicketImage(){
+  // Support Cloudinary URL on current ticket
+  const imgUrl=currentTicket?.imgUrl;
+  if(!window._lastTicketB64 && imgUrl){
+    openModal(`<div style="text-align:center"><img src="${imgUrl}" style="max-width:100%;max-height:80vh;border-radius:8px"/></div>`);
+    return;
+  }
   const b64=window._lastTicketB64;if(!b64)return;
   openModal(`<div style="text-align:center"><img src="data:image/jpeg;base64,${b64}" style="max-width:100%;max-height:70vh;border-radius:var(--rad-sm);object-fit:contain"/></div><div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Cerrar</button></div>`);
 }
@@ -1364,6 +1460,8 @@ const GistSync = {
       delete payload.groqKey;
       delete payload.gistToken;
       delete payload.apiKey;
+      delete payload.cloudinarySecret;
+      delete payload.cloudinaryApiKey;
       payload._syncedAt = new Date().toISOString();
       const res = await fetch(`https://api.github.com/gists/${DB.gistId}`,{
         method:'PATCH',
@@ -1454,6 +1552,7 @@ const GistSync = {
     // Nunca sobreescribir claves sensibles con datos del Gist
     delete remote.visionKey; delete remote.groqKey;
     delete remote.gistToken; delete remote.apiKey;
+    delete remote.cloudinarySecret; delete remote.cloudinaryApiKey;
     delete remote.devMode;
     DB = Object.assign({}, DB, remote);
     if(vk) DB.gistToken=vk;
@@ -1477,7 +1576,7 @@ function applyReadOnlyUI(){
     const b=document.createElement('div');
     b.id='readonly-banner';
     b.style.cssText='background:rgba(124,110,245,0.12);border-bottom:1px solid rgba(124,110,245,0.25);padding:7px 16px;font-size:12px;color:#a599f5;text-align:center;letter-spacing:.2px;';
-    b.textContent='👁 Modo visualización — solo lectura';
+    b.textContent='Modo visualización — solo lectura';
     const view=document.getElementById('view');
     if(view.firstChild) view.insertBefore(b,view.firstChild);
     else view.appendChild(b);
@@ -1491,6 +1590,25 @@ async function gistActualizar(){
   if(GistSync.isAdmin()) await GistSync.push();
   showScreen(currentScreen);
 }
+
+// ── SCROLL AL RELOJ (iOS status bar tap) ─────────────────────
+(function(){
+  // En iOS, tap en la barra de estado (zona superior ~44px) hace scroll al top
+  // En PWA hay que implementarlo manualmente
+  let _lastTap=0;
+  document.addEventListener('touchstart', e=>{
+    const touch=e.touches[0];
+    if(!touch) return;
+    // Solo si el tap es en los primeros 44px de la pantalla
+    if(touch.clientY > 44) return;
+    const now=Date.now();
+    // Evitar doble disparo
+    if(now-_lastTap < 500) return;
+    _lastTap=now;
+    const view=document.getElementById('view');
+    if(view) view.scrollTo({top:0,behavior:'smooth'});
+  }, {passive:true});
+})();
 
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
