@@ -28,7 +28,7 @@ function hideOCRLoading(){document.getElementById('ocr-loading').style.display='
 function hideSplash(){const s=document.getElementById('splash');s.classList.add('hidden');setTimeout(()=>s.style.display='none',450);}
 
 let currentScreen='home';
-function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
+function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();applyReadOnlyUI();}
 
 let setupStep=-1,setupPersonCount=2;
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
@@ -772,7 +772,7 @@ async function enviarReleer(){
 function saveTicket(){
   if(window._savingTicket)return;window._savingTicket=true;
   try{const t=currentTicket;if(!t){window._savingTicket=false;return;}try{document.querySelectorAll('.product-price-input').forEach((el,i)=>{if(el.value&&t.products&&t.products[i]){t.products[i].unitPrice=parsePrice(el.value);t.products[i].finalPrice=parseFloat((t.products[i].unitPrice*(t.products[i].qty||1)).toFixed(2));}});}catch(e){}t.confirmed=true;t.createdAt=t.createdAt||new Date().toISOString().slice(0,10);if(!t.total||t.total===0)t.total=(t.products||[]).reduce((s,p)=>s+parseFloat(p.finalPrice||p.price||0),0);learnFromTicket(t);const tS={...t};delete tS._imageB64;const idx=DB.tickets.findIndex(x=>x.id===t.id);if(idx>=0)DB.tickets[idx]=tS;else DB.tickets.push(tS);saveDB();}finally{window._savingTicket=false;}
-  closeTicketEditor();showToast('Ticket guardado');const ts=currentScreen==='tickets'?'tickets':'home';currentScreen=ts;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[ts]?.();
+  closeTicketEditor();showToast('Ticket guardado');const ts=currentScreen==='tickets'?'tickets':'home';currentScreen=ts;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[ts]?.();GistSync.push();
 }
 function learnFromTicket(t){if(t.last4&&t.payer){DB.knowledge.cards[t.last4]=t.payer;const person=personById(t.payer);if(person){if(!person.cards)person.cards=[];if(!person.cards.includes(t.last4))person.cards.push(t.last4);}}(t.products||[]).forEach(prod=>{const key=normalizeKey(prod.name||'');if(!key)return;const ocrRaw=(prod.rawName||'').trim().toUpperCase();const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};DB.knowledge.products[key]={person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,count:(ex.count||0)+1,category:prod.category,alias:prod.name,ocr_raw:ocrRaw&&!(ex.ocr_raw||[]).includes(ocrRaw)?[...(ex.ocr_raw||[]),ocrRaw]:(ex.ocr_raw||[])};const ocrStripped=ocrRaw.replace(/^\d+\s+/,'');[ocrRaw,ocrStripped].filter(Boolean).forEach(raw=>{const rk=normalizeKey(raw);if(rk&&rk!==key)DB.knowledge.products[rk]={...(DB.knowledge.products[rk]||{}),person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,alias:prod.name,ocr_raw:[raw]};});});}
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;window._lastTicketB64=null;_releerMode=false;}
@@ -810,7 +810,7 @@ function setExpenseCat(c){currentExpense.category=c;renderManualExpenseSheet();}
 function setExpensePayer(id){currentExpense.payer=id;renderManualExpenseSheet();}
 function updateMeSplit(v){currentExpense.split1=parseInt(v);document.getElementById('me-sp1').textContent=v+'%';document.getElementById('me-sp2').textContent=(100-parseInt(v))+'%';}
 function setMeQuickSplit(v){currentExpense.split1=v;document.getElementById('me-split-range').value=v;updateMeSplit(v);}
-function saveManualExpense(){if(!currentExpense.total||currentExpense.total<=0){showToast('Introduce un importe');return;}currentExpense.confirmed=true;currentExpense.store=currentExpense.description||(EXPENSE_CATS.find(c=>c.id===currentExpense.category)||{}).label||'Gasto';const idx=DB.expenses.findIndex(e=>e.id===currentExpense.id);if(idx>=0)DB.expenses[idx]=currentExpense;else DB.expenses.push(currentExpense);saveDB();closeManualExpense();showToast('Gasto guardado');showScreen(currentScreen);}
+function saveManualExpense(){if(!currentExpense.total||currentExpense.total<=0){showToast('Introduce un importe');return;}currentExpense.confirmed=true;currentExpense.store=currentExpense.description||(EXPENSE_CATS.find(c=>c.id===currentExpense.category)||{}).label||'Gasto';const idx=DB.expenses.findIndex(e=>e.id===currentExpense.id);if(idx>=0)DB.expenses[idx]=currentExpense;else DB.expenses.push(currentExpense);saveDB();GistSync.push();closeManualExpense();showToast('Gasto guardado');showScreen(currentScreen);}
 function deleteExpense(){DB.expenses=DB.expenses.filter(e=>e.id!==currentExpense.id);saveDB();closeManualExpense();showToast('Gasto eliminado');showScreen(currentScreen);}
 function closeManualExpense(){document.getElementById('me-sheet').style.display='none';currentExpense=null;}
 
@@ -1066,6 +1066,12 @@ function renderSettings(){
     <p class="settings-footer">Clarito · Datos guardados localmente</p>`;
 }
 function renderDevSettings(){return`
+  <div class="settings-section"><div class="settings-section-title">Sincronización Gist</div><div class="settings-group">
+    <div class="settings-row" onclick="editGistToken()"><div class="settings-icon" style="background:#24292e"><svg viewBox="0 0 24 24" fill="white" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.8 1.3 3.49 1 .11-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 3-.4c1.02 0 2.04.13 3 .4 2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58C20.57 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z"/></svg></div><div class="settings-label">GitHub Token</div><div class="settings-value">${DB.gistToken?'•••'+DB.gistToken.slice(-4):'No configurado'}</div><div class="settings-arrow">›</div></div>
+    <div class="settings-row" onclick="editGistId()"><div class="settings-icon" style="background:#333"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div><div class="settings-label">Gist ID</div><div class="settings-value" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis">${DB.gistId||'No configurado'}</div><div class="settings-arrow">›</div></div>
+    ${DB.gistId?`<div class="settings-row" onclick="gistActualizar()"><div class="settings-label">Sincronizar ahora</div><div class="settings-arrow">↻</div></div>`:''}
+    <div class="settings-row"><div class="settings-label" style="color:var(--txt3);font-size:12px">${GistSync.isAdmin()?'✓ Modo admin — lectura y escritura':DB.gistId?'👁 Modo solo lectura':'Sin configurar'}</div></div>
+  </div></div>
   <div class="settings-section"><div class="settings-section-title">APIs</div><div class="settings-group">
     <div class="settings-row" onclick="editVisionKey()"><div class="settings-icon settings-icon-vision"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h3M7 12h3M7 16h3M14 8h3M14 12h3M14 16h3"/></svg></div><div class="settings-label">Google Vision Key</div><div class="settings-value">${DB.visionKey?'•••'+DB.visionKey.slice(-4):'No configurada'}</div><div class="settings-arrow">›</div></div>
     ${DB.visionKey?`<div class="settings-row" onclick="showVisionStats()"><div class="settings-icon settings-icon-vision-stats"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/></svg></div><div class="settings-label">Uso de Vision</div><div class="settings-value">${DB.visionStats?.calls||0} lecturas</div><div class="settings-arrow">›</div></div>`:''}
@@ -1085,8 +1091,38 @@ function renderDevSettings(){return`
   <div class="settings-section"><div class="settings-section-title">Estadísticas</div><div class="settings-group">
     <div class="settings-row" onclick="resetStatsConfirm()"><div class="settings-icon settings-icon-reset"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg></div><div class="settings-label">Nuevo mes / Resetear stats</div><div class="settings-arrow">›</div></div>
   </div></div>
-  <div class="settings-action-row"><button class="btn-secondary btn-full" onclick="DB.aiConvMessages=[];saveDB();location.reload()">Actualizar app</button></div>
+  <div class="settings-action-row"><button class="btn-secondary btn-full" onclick="gistActualizar()">Actualizar</button></div>
   <div class="settings-action-row"><button class="btn-secondary btn-full btn-muted" onclick="DB.devMode=false;S.set('devMode',false);saveDB();renderSettings();showToast('Modo desarrollador desactivado')">Ocultar opciones de desarrollador</button></div>`;}
+
+function editGistToken(){
+  openModal(`<div class="modal-title">GitHub Token</div>
+    <p class="modal-body-text" style="font-size:13px">Token con scope <strong>gist</strong>. Solo necesario para escribir datos (modo admin).</p>
+    <input type="password" id="gist-token-input" placeholder="ghp_..." value="${DB.gistToken||''}" style="margin:12px 0"/>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-primary" onclick="saveGistToken()">Guardar</button>
+    </div>`);
+}
+function saveGistToken(){
+  const v=document.getElementById('gist-token-input').value.trim();
+  DB.gistToken=v;saveDB();closeModal();renderSettings();
+  showToast(v?'Token guardado':'Token eliminado');
+}
+function editGistId(){
+  openModal(`<div class="modal-title">Gist ID</div>
+    <p class="modal-body-text" style="font-size:13px">El ID es la parte final de la URL de tu Gist:<br><span style="opacity:0.6">gist.github.com/usuario/<strong>este-es-el-id</strong></span></p>
+    <input id="gist-id-input" placeholder="abc123def456..." value="${DB.gistId||''}" style="margin:12px 0"/>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-primary" onclick="saveGistId()">Guardar</button>
+    </div>`);
+}
+function saveGistId(){
+  const v=document.getElementById('gist-id-input').value.trim();
+  DB.gistId=v;saveDB();closeModal();renderSettings();
+  showToast(v?'Gist ID guardado':'Gist ID eliminado');
+}
+function isReadOnly(){ return GistSync.isReadOnly(); }
 
 function editKnowledgeProducts(){
   // Deduplicar: quedarse con una entrada por alias (la más completa)
@@ -1235,6 +1271,147 @@ function showTicketImage(){
   openModal(`<div style="text-align:center"><img src="data:image/jpeg;base64,${b64}" style="max-width:100%;max-height:70vh;border-radius:var(--rad-sm);object-fit:contain"/></div><div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Cerrar</button></div>`);
 }
 
+
+// ── GIST SYNC ─────────────────────────────────────────────────
+const GistSync = {
+  _lastToast: 0,
+
+  isAdmin(){ return !!(DB.gistToken && DB.gistId); },
+  isReadOnly(){ return !!(DB.gistId && !DB.gistToken); },
+
+  _noConnToast(){
+    const now=Date.now();
+    if(now-this._lastToast < 60000) return;
+    this._lastToast=now;
+    showToast('Sin conexión — datos guardados localmente',3000);
+  },
+
+  async push(){
+    if(!this.isAdmin()) return;
+    try{
+      const payload = JSON.parse(JSON.stringify(DB));
+      delete payload.aiConvMessages;
+      payload._syncedAt = new Date().toISOString();
+      const res = await fetch(`https://api.github.com/gists/${DB.gistId}`,{
+        method:'PATCH',
+        headers:{'Authorization':'token '+DB.gistToken,'Content-Type':'application/json'},
+        body: JSON.stringify({files:{'clarito-data.json':{content:JSON.stringify(payload,null,2)}}})
+      });
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      DB._syncedAt = payload._syncedAt;
+      saveDB();
+    } catch(e){
+      if(e.message.includes('fetch')||e.message.includes('network')||e.message.includes('Failed')) this._noConnToast();
+      else showToast('Error al guardar en Gist: '+e.message, 3000);
+    }
+  },
+
+  async pull(){
+    if(!DB.gistId) return;
+    const headers = {'Content-Type':'application/json'};
+    if(DB.gistToken) headers['Authorization']='token '+DB.gistToken;
+    try{
+      const res = await fetch(`https://api.github.com/gists/${DB.gistId}`,{headers});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json();
+      const raw = data.files?.['clarito-data.json']?.content;
+      if(!raw) return;
+      const remote = JSON.parse(raw);
+      await this._merge(remote);
+    } catch(e){
+      if(e.message.includes('fetch')||e.message.includes('network')||e.message.includes('Failed')) this._noConnToast();
+      else console.warn('Gist pull error:',e.message);
+    }
+  },
+
+  async _merge(remote){
+    const localAt  = DB._syncedAt  ? new Date(DB._syncedAt)  : null;
+    const remoteAt = remote._syncedAt ? new Date(remote._syncedAt) : null;
+
+    // Si los timestamps son iguales o no hay datos remotos útiles → no hacer nada
+    if(!remoteAt) return;
+    if(localAt && Math.abs(localAt-remoteAt) < 2000) return; // <2s de diferencia → misma versión
+
+    // Si local no tiene timestamp → aceptar remoto directamente
+    if(!localAt){
+      this._applyRemote(remote);
+      showToast('Datos sincronizados desde Gist',2500);
+      return;
+    }
+
+    // Conflicto real → preguntar
+    const fmtDt = iso => {
+      const d = new Date(iso);
+      return d.toLocaleDateString('es-ES',{day:'2-digit',month:'short',year:'numeric'})
+        + ' ' + d.toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'});
+    };
+    const localStr  = fmtDt(DB._syncedAt);
+    const remoteStr = fmtDt(remote._syncedAt);
+
+    openModal(`
+      <div class="modal-title">Conflicto de datos</div>
+      <p class="modal-body-text">Hay diferencias entre los datos locales y los de Gist. ¿Cuál quieres conservar?</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin:16px 0">
+        <button class="btn-primary" onclick="GistSync._keepLocal();closeModal()">
+          Mantener local<br><span style="font-size:12px;opacity:0.7">${localStr}</span>
+        </button>
+        <button class="btn-secondary" onclick="GistSync._keepRemote(${JSON.stringify(JSON.stringify(remote)).replace(/</g,'\\u003c')});closeModal()">
+          Usar Gist<br><span style="font-size:12px;opacity:0.7">${remoteStr}</span>
+        </button>
+      </div>
+      <button class="btn-secondary btn-muted" onclick="closeModal()" style="width:100%;margin-top:4px">Decidir más tarde</button>
+    `);
+  },
+
+  _keepLocal(){
+    // Subir local a Gist como fuente de verdad
+    this.push();
+    showToast('Datos locales subidos a Gist',2500);
+  },
+
+  _keepRemote(jsonStr){
+    const remote = JSON.parse(jsonStr);
+    this._applyRemote(remote);
+    showToast('Datos de Gist aplicados',2500);
+  },
+
+  _applyRemote(remote){
+    const vk=DB.gistToken; const gi=DB.gistId;
+    DB = Object.assign({}, DB, remote);
+    if(vk) DB.gistToken=vk;
+    if(gi) DB.gistId=gi;
+    DB.aiConvMessages=[];
+    if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
+    if(!DB.aiQuestions) DB.aiQuestions=[];
+    DB.persons.forEach(p=>{if(!p.cards)p.cards=[];});
+    saveDB();
+    showScreen(currentScreen);
+    updateAIBadge();
+  }
+};
+
+function applyReadOnlyUI(){
+  if(!GistSync.isReadOnly()) return;
+  // Ocultar botones de acción excepto despensa y asistente
+  document.querySelectorAll('.upload-zone,.btn-add-ticket,.btn-add-expense,.btn-settle,.btn-save,.settle-btn').forEach(el=>el.style.display='none');
+  // Banner de solo lectura si no existe ya
+  if(!document.getElementById('readonly-banner')){
+    const b=document.createElement('div');
+    b.id='readonly-banner';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:500;background:rgba(124,110,245,0.15);border-bottom:1px solid rgba(124,110,245,0.3);padding:6px 16px;font-size:12px;color:var(--txt2);text-align:center;backdrop-filter:blur(8px)';
+    b.textContent='Modo visualización — solo lectura';
+    document.body.prepend(b);
+  }
+}
+
+async function gistActualizar(){
+  DB.aiConvMessages=[];saveDB();
+  showToast('Sincronizando…',2000);
+  await GistSync.pull();
+  if(GistSync.isAdmin()) await GistSync.push();
+  showScreen(currentScreen);
+}
+
 // ── BOOT ──────────────────────────────────────────────────────
 loadDB();
 DB.aiConvMessages=[];
@@ -1245,6 +1422,6 @@ setTimeout(()=>{
   setTimeout(()=>{
     const hasData=DB.tickets.length>0||(DB.persons&&DB.persons.some(p=>!p.name.startsWith('Persona ')));
     if(!DB.visionKey&&!hasData){startSetup();}
-    else{document.getElementById('app').style.display='flex';showScreen('home');updateAIBadge();}
+    else{document.getElementById('app').style.display='flex';showScreen('home');updateAIBadge();if(DB.gistId)GistSync.pull();}
   },100);
 },2500);
