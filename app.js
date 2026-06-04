@@ -96,8 +96,14 @@ async function setupGistRestore(){
     if(!raw) throw new Error('El Gist no contiene datos de Clarito');
     const remote=JSON.parse(raw);
     if(!remote.persons||!remote.persons.length) throw new Error('Datos no válidos');
+    // Nunca restaurar claves sensibles del Gist — el usuario las introduce manualmente
+    delete remote.visionKey;
+    delete remote.groqKey;
+    delete remote.gistToken;
+    delete remote.apiKey;
     DB=Object.assign({},DB,remote);
     DB.gistId=gistId;
+    DB.gistToken='';
     DB.aiConvMessages=[];
     if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
     saveDB();
@@ -1338,7 +1344,12 @@ const GistSync = {
     if(!this.isAdmin()) return;
     try{
       const payload = JSON.parse(JSON.stringify(DB));
+      // Nunca subir claves sensibles al Gist
       delete payload.aiConvMessages;
+      delete payload.visionKey;
+      delete payload.groqKey;
+      delete payload.gistToken;
+      delete payload.apiKey;
       payload._syncedAt = new Date().toISOString();
       const res = await fetch(`https://api.github.com/gists/${DB.gistId}`,{
         method:'PATCH',
@@ -1425,9 +1436,15 @@ const GistSync = {
 
   _applyRemote(remote){
     const vk=DB.gistToken; const gi=DB.gistId;
+    const visionKey=DB.visionKey; const groqKey=DB.groqKey;
+    // Nunca sobreescribir claves sensibles con datos del Gist
+    delete remote.visionKey; delete remote.groqKey;
+    delete remote.gistToken; delete remote.apiKey;
     DB = Object.assign({}, DB, remote);
     if(vk) DB.gistToken=vk;
     if(gi) DB.gistId=gi;
+    if(visionKey) DB.visionKey=visionKey;
+    if(groqKey) DB.groqKey=groqKey;
     DB.aiConvMessages=[];
     if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
     if(!DB.aiQuestions) DB.aiQuestions=[];
