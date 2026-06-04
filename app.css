@@ -421,18 +421,20 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
   #setup-screen{width:100vw;min-width:unset;max-width:100vw}
   .ticket-editor,.me-sheet,.ai-sheet{width:100vw;min-width:unset;max-width:100vw;left:0;transform:none}
   .modal-sheet{width:90vw;min-width:unset;max-width:780px;margin:0 auto}
-  /* Tipografía mayor */
-  body{font-size:18px}
+  /* Tipografía iPad — solo elementos específicos, sin tocar body */
   input,textarea,select{font-size:17px;padding:13px 18px}
   .btn-primary,.btn-secondary,.btn-danger{font-size:17px;padding:15px 24px}
   .section-title{font-size:17px}
-  /* Textos secundarios y pequeños */
-  .ticket-first-prod,.label-hint,.field-label,.ocr-status{font-size:14px}
+  .card-title,.ticket-store,.balance-name,.stat-label{font-size:17px}
+  /* Textos secundarios — más grandes que en móvil */
+  .ticket-first-prod,.label-hint,.field-label,.ocr-status{font-size:15px}
   .nav-btn span{font-size:14px}
   .price-unit-val{font-size:13px}
-  .ticket-date,.fmtDate,.settings-row-desc{font-size:14px}
-  .inv-name,.inv-days{font-size:15px}
+  .ticket-date,.settings-row-desc,.setup-link-hint{font-size:15px}
+  .inv-name,.inv-days{font-size:16px}
   .ai-msg{font-size:16px}
+  .empty-state p,.modal-title{font-size:16px}
+  .settings-row-label{font-size:16px}
   /* Contenido interior con padding generoso */
   #view{padding:0 24px}
   /* Tickets en 2 columnas */
