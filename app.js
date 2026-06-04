@@ -1201,7 +1201,7 @@ function editGistToken(){
 }
 function saveGistToken(){
   const v=document.getElementById('gist-token-input').value.trim();
-  DB.gistToken=v;saveDB();closeModal();renderSettings();
+  DB.gistToken=v.trim();saveDB();closeModal();renderSettings();
   showToast(v?'Token guardado':'Token eliminado');
 }
 function editGistId(){
@@ -1468,6 +1468,7 @@ const GistSync = {
         headers:{'Authorization':'Bearer '+DB.gistToken,'Content-Type':'application/json'},
         body: JSON.stringify({files:{'clarito-data.json':{content:JSON.stringify(payload,null,2)}}})
       });
+      if(res.status===401) throw new Error('Token inválido o sin permiso gist — revisa el token en Ajustes');
       if(!res.ok) throw new Error('HTTP '+res.status);
       DB._syncedAt = payload._syncedAt;
       saveDB();
@@ -1519,6 +1520,7 @@ const GistSync = {
     const localStr  = fmtDt(DB._syncedAt);
     const remoteStr = fmtDt(remote._syncedAt);
 
+    window._pendingRemote=remote;
     openModal(`
       <div class="modal-title">Conflicto de datos</div>
       <p class="modal-body-text">Hay diferencias entre los datos locales y los de Gist. ¿Cuál quieres conservar?</p>
@@ -1526,7 +1528,7 @@ const GistSync = {
         <button class="btn-primary" onclick="GistSync._keepLocal();closeModal()">
           Mantener local<br><span style="font-size:12px;opacity:0.7">${localStr}</span>
         </button>
-        <button class="btn-secondary" onclick="GistSync._keepRemote(${JSON.stringify(JSON.stringify(remote)).replace(/</g,'\\u003c')});closeModal()">
+        <button class="btn-secondary" onclick="GistSync._keepRemote();closeModal()">
           Usar Gist<br><span style="font-size:12px;opacity:0.7">${remoteStr}</span>
         </button>
       </div>
@@ -1540,8 +1542,10 @@ const GistSync = {
     showToast('Datos locales subidos a Gist',2500);
   },
 
-  _keepRemote(jsonStr){
-    const remote = JSON.parse(jsonStr);
+  _keepRemote(){
+    const remote = window._pendingRemote;
+    if(!remote){showToast('Error: datos no disponibles');return;}
+    window._pendingRemote=null;
     this._applyRemote(remote);
     showToast('Datos de Gist aplicados',2500);
   },
