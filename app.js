@@ -45,7 +45,8 @@ function renderSetupStep(){
       <p>¿Es tu primera vez o ya tienes datos guardados?</p>
       <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
         <button class="btn-primary" onclick="setupStep=0;renderSetupStep()">Soy nuevo usuario →</button>
-        <button class="btn-secondary" onclick="setupImportFlow()">Tengo un JSON con mis datos</button>
+        <button class="btn-secondary" onclick="setupGistFlow()">Tengo un Gist ID</button>
+        <button class="btn-secondary" onclick="setupImportFlow()" style="margin-top:4px">Tengo un archivo JSON</button>
       </div>`;
   } else if(setupStep===0){
     html+=`<h2>Claves de acceso</h2><p>Necesitas dos claves gratuitas para que Clarito funcione.</p>
@@ -72,6 +73,43 @@ function renderSetupStep(){
   el.innerHTML=html;
 }
 function setupBack(){if(setupStep>0)setupStep--;else setupStep=-1;renderSetupStep();}
+function setupGistFlow(){
+  const el=document.getElementById('setup-content');
+  el.innerHTML=`
+    <h2>Recuperar desde Gist</h2>
+    <p>Introduce tu Gist ID para descargar todos tus datos automáticamente.</p>
+    <p style="font-size:12px;color:var(--txt2);margin-top:-8px">Es la parte final de la URL:<br><span style="opacity:0.6">gist.github.com/usuario/<strong>este-es-el-id</strong></span></p>
+    <input id="setup-gist-id-input" placeholder="abc123def456..." style="margin:16px 0"/>
+    <button class="btn-primary" onclick="setupGistRestore()">Descargar datos →</button>
+    <button class="btn-secondary" onclick="setupStep=-1;renderSetupStep()" style="margin-top:10px">← Atrás</button>`;
+}
+async function setupGistRestore(){
+  const gistId=document.getElementById('setup-gist-id-input').value.trim();
+  if(!gistId){showToast('Introduce el Gist ID');return;}
+  const btn=document.querySelector('#setup-content .btn-primary');
+  if(btn){btn.disabled=true;btn.textContent='Descargando…';}
+  try{
+    const res=await fetch(`https://api.github.com/gists/${gistId}`);
+    if(!res.ok) throw new Error('Gist no encontrado ('+res.status+')');
+    const data=await res.json();
+    const raw=data.files?.['clarito-data.json']?.content;
+    if(!raw) throw new Error('El Gist no contiene datos de Clarito');
+    const remote=JSON.parse(raw);
+    if(!remote.persons||!remote.persons.length) throw new Error('Datos no válidos');
+    DB=Object.assign({},DB,remote);
+    DB.gistId=gistId;
+    DB.aiConvMessages=[];
+    if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
+    saveDB();
+    document.getElementById('setup-screen').style.display='none';
+    document.getElementById('app').style.display='flex';
+    showScreen('home');
+    showToast('¡Datos recuperados! Añade tus claves API en Ajustes.',4000);
+  }catch(e){
+    showToast('Error: '+e.message,3000);
+    if(btn){btn.disabled=false;btn.textContent='Descargar datos →';}
+  }
+}
 function setupImportFlow(){
   // Mostrar selector de archivo JSON dentro del setup
   const el=document.getElementById('setup-content');
@@ -103,7 +141,7 @@ function setupImportFile(input){
           <div class="setup-summary-row"><span style="color:var(--txt2)">Tickets</span><strong>${tickets}</strong></div>
           <div class="setup-summary-row"><span style="color:var(--txt2)">Gastos manuales</span><strong>${expenses}</strong></div>
         </div>
-        <p style="font-size:13px;color:var(--txt2)">Las claves API se restaurarán del JSON automáticamente.</p>
+        <p style="font-size:13px;color:var(--txt2)">Las claves API no se incluyen en el JSON por seguridad — podrás introducirlas después en Ajustes.</p>
         <button class="btn-primary" onclick="setupImportConfirm()">Importar estos datos →</button>
         <button class="btn-secondary" onclick="setupStep=-1;renderSetupStep()" style="margin-top:10px">← Atrás</button>`;
       window._setupImportData=data;
