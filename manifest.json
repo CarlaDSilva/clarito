@@ -2,8 +2,8 @@
   "name": "Clarito",
   "short_name": "Clarito",
   "description": "La contabilidad doméstica casi invisible",
-  "start_url": "/clarit0/",
-  "scope": "/clarit0/",
+  "start_url": "/clarito/",
+  "scope": "/clarito/",
   "display": "standalone",
   "background_color": "#0d0d0f",
   "theme_color": "#0d0d0f",
@@ -13,7 +13,7 @@
     {"src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
   ],
   "share_target": {
-    "action": "/clarit0/",
+    "action": "/clarito/",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
