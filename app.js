@@ -938,7 +938,7 @@ function buildInventoryRows(preds, bought){
     <div class="inv-store-card">
       <div class="inv-store-card-header">${storeName}</div>
       ${items.map(p=>{
-        const pct=Math.max(0,Math.min(100,100-Math.round((p.days/p.freq)*100)));
+        const pct=Math.max(0,Math.min(100,Math.round((p.days/p.freq)*100)));
         const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
         const key=normalizeKey(p.name);
         const isBought=bought.has(key);
@@ -1156,7 +1156,17 @@ function onLogoTap(){_devTaps++;clearTimeout(_devTimer);if(_devTaps>=13){_devTap
 function clearKnowledge(){openModal(`<div class="modal-title">¿Borrar conocimiento?</div><p class="modal-body-text">Se eliminan los productos aprendidos. Los tickets se conservan.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="DB.knowledge.products={};saveDB();closeModal();renderSettings();showToast('Borrado')">Borrar</button></div>`);}
 function editVisionKey(){openModal(`<div class="modal-title">Google Cloud Vision Key</div><p class="modal-hint">Obtén tu key en <strong class="text-accent">console.cloud.google.com</strong> → APIs → Credenciales</p><input type="password" id="new-visionkey" value="${DB.visionKey||''}" placeholder="AIzaSy..."/><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="const k=document.getElementById('new-visionkey').value.trim();if(!k)return;DB.visionKey=k;S.set('visionKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
 function editGroqKey(){openModal(`<div class="modal-title">Groq API Key</div><p class="modal-hint">Key gratuita en <strong class="text-accent">console.groq.com</strong> → API Keys</p><input type="password" id="new-groqkey" value="${DB.groqKey||''}" placeholder="gsk_..."/><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="const k=document.getElementById('new-groqkey').value.trim();if(!k)return;DB.groqKey=k;S.set('groqKey',k);saveDB();closeModal();showToast('Guardada');renderSettings()">Guardar</button></div>`);}
-function exportData(){const b=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='clarito-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
+function exportData(){
+  const exp=JSON.parse(JSON.stringify(DB));
+  delete exp.visionKey;
+  delete exp.groqKey;
+  delete exp.gistToken;
+  delete exp.apiKey;
+  delete exp.aiConvMessages;
+  const b=new Blob([JSON.stringify(exp,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);
+  a.download='clarito-'+new Date().toISOString().slice(0,10)+'.json';a.click();
+}
 function importData(){
   const input=document.createElement('input');
   input.type='file';input.accept='.json,application/json';
