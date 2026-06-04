@@ -101,9 +101,11 @@ async function setupGistRestore(){
     delete remote.groqKey;
     delete remote.gistToken;
     delete remote.apiKey;
+    delete remote.devMode;
     DB=Object.assign({},DB,remote);
     DB.gistId=gistId;
     DB.gistToken='';
+    DB.devMode=false;
     DB.aiConvMessages=[];
     if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
     saveDB();
@@ -157,7 +159,9 @@ function setupImportFile(input){
 }
 function setupImportConfirm(){
   const data=window._setupImportData;if(!data)return;
+  delete data.devMode;
   DB=Object.assign({},DB,data);
+  DB.devMode=false;
   // Restaurar claves del JSON si existen
   if(data.visionKey)DB.visionKey=data.visionKey;
   if(data.groqKey)DB.groqKey=data.groqKey;
@@ -628,6 +632,7 @@ function triggerFileGallery(){document.getElementById('file-input').click();}
 
 // ── HOME ──────────────────────────────────────────────────────
 function renderHome(){
+  const RO=GistSync.isReadOnly();
   const bal=calcBalance();
   const recent=[...DB.tickets,...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6);
   document.getElementById('view').innerHTML=`
@@ -642,8 +647,8 @@ function renderHome(){
       </div>
     </div>
     <div class="quick-actions">
-      <button class="qa-btn" onclick="showScreen('tickets')"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Subir ticket</span></button>
-      <button class="qa-btn" onclick="openManualExpense()"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Gasto manual</span></button>
+      ${RO?"":`<button class="qa-btn" onclick="showScreen('tickets')"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Subir ticket</span></button>`}
+      ${RO?"":`<button class="qa-btn" onclick="openManualExpense()"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Gasto manual</span></button>`}
       <button class="qa-btn" onclick="showScreen('stats')"><svg viewBox="0 0 24 24" fill="none"><rect x="18" y="3" width="4" height="18"/><rect x="10" y="8" width="4" height="13"/><rect x="2" y="13" width="4" height="8"/></svg><span>Estadísticas</span></button>
       <button class="qa-btn" onclick="showScreen('balance')"><svg viewBox="0 0 24 24" fill="none"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg><span>Balance</span></button>
     </div>
@@ -673,10 +678,12 @@ function calcBalance(){
 }
 
 function renderTickets(){
+  const RO=GistSync.isReadOnly();
   const all=DB.tickets.slice().reverse();const active=all.filter(t=>!t.settled);const past=all.filter(t=>t.settled);
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Tickets</h1><p>${active.length} activos</p></div>
-    <div class="upload-zone" onclick="triggerFileGallery()"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3"/><polyline points="12 8 12 16"/><polyline points="8 12 12 8 16 12"/></svg><h3>Subir ticket</h3></div>
+    ${RO?'':`<div class="upload-zone" onclick="triggerFileGallery()"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3"/><polyline points="12 8 12 16"/><polyline points="8 12 12 8 16 12"/></svg><h3>Subir ticket</h3></div>`}
+
     <div class="upload-actions"><button class="btn-secondary" onclick="triggerCamera()">Cámara</button><button class="btn-secondary" onclick="openManualTicket()">Manual</button></div>
     <div class="list-spacer"></div>
     ${active.length===0?`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/></svg><h3>Sin tickets activos</h3><p>Sube una foto para empezar</p></div>`:active.map(renderTicketListItem).join('')}
@@ -713,7 +720,7 @@ function renderTicketEditor(){
   document.getElementById('ticket-editor').innerHTML=`
     <div class="te-header"><button onclick="closeTicketEditor()" class="icon-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><h2>Revisar ticket</h2>
       ${window._lastTicketB64?`<img id="ticket-thumb" src="data:image/jpeg;base64,${window._lastTicketB64}" class="ticket-thumb" onclick="showTicketImage()"/>`:`<img id="ticket-thumb" style="display:none" class="ticket-thumb" onclick="showTicketImage()"/>`}
-      <button onclick="deleteCurrentTicket()" class="btn-text-danger">Eliminar</button></div>
+      ${GistSync.isReadOnly()?'':'<button onclick="deleteCurrentTicket()" class="btn-text-danger">Eliminar</button>'}</div>
     <div class="te-body">
       ${errorsHtml?`<div class="te-section">${errorsHtml}</div>`:''}
       <div class="te-section"><div class="te-section-title">Información</div>
@@ -734,7 +741,7 @@ function renderTicketEditor(){
     <div class="te-footer">
       <button class="btn-secondary" onclick="closeTicketEditor()">Cancelar</button>
       ${DB.groqKey&&window._lastTicketB64?(_releerMode?`<button class="btn-secondary" onclick="seleccionarTodoReleer()">Todas</button><button class="btn-primary btn-releer" onclick="enviarReleer()">Enviar</button>`:`<button class="btn-secondary" onclick="activarReleer()">Releer</button>`):''}
-      <button class="btn-primary btn-save" onclick="saveTicket()">Guardar</button>
+      ${GistSync.isReadOnly()?'':'<button class="btn-primary btn-save" onclick="saveTicket()">Guardar</button>'}
     </div>`;
 }
 
@@ -836,7 +843,7 @@ function renderManualExpenseSheet(){
   const payerBtns=DB.persons.map(p=>`<button onclick="setExpensePayer('${p.id}')" class="payer-btn-lg ${e.payer===p.id?'active':''}" style="--payer-color:${p.color}">${p.name}</button>`).join('');
   const p1=DB.persons[0],p2=DB.persons[1]||DB.persons[0];
   document.getElementById('me-sheet').innerHTML=`
-    <div class="me-header"><button onclick="closeManualExpense()" class="icon-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><h2>Gasto manual</h2>${currentExpense.confirmed?`<button onclick="deleteExpense()" class="btn-text-danger">Eliminar</button>`:'<div class="header-spacer"></div>'}</div>
+    <div class="me-header"><button onclick="closeManualExpense()" class="icon-btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button><h2>Gasto manual</h2>${currentExpense.confirmed&&!GistSync.isReadOnly()?`<button onclick="deleteExpense()" class="btn-text-danger">Eliminar</button>`:'<div class="header-spacer"></div>'}</div>
     <div class="me-body">
       <div class="field-row"><label class="field-label">Importe</label><input type="number" value="${e.total||''}" placeholder="0,00" step="0.01" class="input-amount" oninput="currentExpense.total=parseFloat(this.value)||0"/></div>
       <div class="field-row"><label class="field-label">Descripción</label><input value="${e.description||''}" placeholder="Ej: Alquiler julio" oninput="currentExpense.description=this.value"/></div>
@@ -972,6 +979,7 @@ function renderInventorySection(){
 }
 
 function buildInventoryRows(preds, bought){
+  const RO=GistSync.isReadOnly();
   const byStore={};
   preds.forEach(p=>{
     const s=p.store||'Sin supermercado';
@@ -984,14 +992,15 @@ function buildInventoryRows(preds, bought){
       ${items.map(p=>{
         const pct=Math.max(0,Math.min(100,Math.round((p.days/p.freq)*100)));
         const col=pct<30?'var(--red)':pct<60?'var(--amber)':'var(--green)';
+        const barW=pct===0?'3px':pct+'%';
         const key=normalizeKey(p.name);
         const isBought=bought.has(key);
         return`<div class="inv-row ${isBought?'inv-bought':''}">
-          <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)"/>
+          <input type="checkbox" class="inv-check" ${isBought?'checked':''} data-key="${key}" onchange="toggleBoughtDespensa(this.dataset.key,this.checked)" ${GistSync.isReadOnly()?'disabled':''}/>
           <div class="inv-name">${p.name}</div>
-          <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+          <div class="inv-bar-track"><div class="inv-bar-fill" style="width:${barW};background:${col}"></div></div>
           <div class="inv-days">~${p.days}d</div>
-          <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar">
+          <button class="inv-archive-btn" data-key="${key}" data-name="${p.name.replace(/"/g,'&quot;')}" title="Ocultar" ${GistSync.isReadOnly()?'style="display:none"':''} >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
               <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
@@ -1188,7 +1197,7 @@ function showVisionStats(){const v=DB.visionStats||{};const calls=v.calls||0;con
 function showGroqStats(){const s=DB.groqStats||{};const calls=s.calls||0;const tokens=s.tokensUsed||0;const since=s.firstCall?'desde '+s.firstCall:'';openModal(`<div class="modal-title">Uso de Groq IA</div><div class="stats-modal-grid"><div class="stats-modal-card"><div class="stats-modal-label">Llamadas totales ${since}</div><div class="stats-modal-value">${calls}</div></div><div class="stats-modal-card"><div class="stats-modal-label">Tokens usados</div><div class="stats-modal-value">${(tokens/1000).toFixed(1)}k</div></div><div class="stats-modal-card"><div class="stats-modal-hint">Plan gratuito · Sin límite mensual · Rate limit: 30 req/min</div></div></div><div class="modal-actions"><button class="btn-primary" onclick="closeModal()">Cerrar</button></div>`);}
 function copyLastOCR(){const text=localStorage.getItem('clarito_lastOCR');const raw=text?JSON.parse(text):'';if(!raw){showToast('Sin OCR guardado todavía');return;}navigator.clipboard.writeText(raw).then(()=>showToast('OCR copiado ✓')).catch(()=>showToast('Error al copiar'));}
 function addPerson(){const idx=DB.persons.length;DB.persons.push({id:'p'+(idx+1),name:'Persona '+(idx+1),color:PRESET_COLORS[idx%PRESET_COLORS.length],cards:[]});saveDB();renderSettings();editPerson(idx);}
-function editPerson(idx){const p=DB.persons[idx];openModal(`<div class="modal-title">Editar ${p.name}</div><div class="field-row"><label class="field-label">Nombre</label><input id="ep-name" value="${p.name}"/></div><div class="field-row"><label class="field-label">Color</label><div class="color-picker-row" id="ep-colors">${PRESET_COLORS.map(c=>`<div class="color-swatch ${p.color===c?'selected':''}" style="background:${c}" onclick="pickPersonColor(${idx},'${c}',this)"></div>`).join('')}</div></div><div class="field-row"><label class="field-label">Tarjetas (últimos 4 dígitos)</label><div id="ep-cards">${(p.cards||[]).map((c,ci)=>`<div class="card-row"><div class="card-row-num">•••• ${c}</div><button onclick="removeCard(${idx},${ci})" class="btn-remove-inline">×</button></div>`).join('')}</div><div class="card-add-row"><input id="ep-card" placeholder="4821" maxlength="4" class="input-card"/><button class="btn-secondary" onclick="addCard(${idx})">Añadir</button></div></div>${DB.persons.length>1?`<button class="btn-danger" onclick="removePerson(${idx})">Eliminar persona</button>`:''}<div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="savePerson(${idx})">Guardar</button></div>`);}
+function editPerson(idx){if(GistSync.isReadOnly())return;const p=DB.persons[idx];openModal(`<div class="modal-title">Editar ${p.name}</div><div class="field-row"><label class="field-label">Nombre</label><input id="ep-name" value="${p.name}"/></div><div class="field-row"><label class="field-label">Color</label><div class="color-picker-row" id="ep-colors">${PRESET_COLORS.map(c=>`<div class="color-swatch ${p.color===c?'selected':''}" style="background:${c}" onclick="pickPersonColor(${idx},'${c}',this)"></div>`).join('')}</div></div><div class="field-row"><label class="field-label">Tarjetas (últimos 4 dígitos)</label><div id="ep-cards">${(p.cards||[]).map((c,ci)=>`<div class="card-row"><div class="card-row-num">•••• ${c}</div><button onclick="removeCard(${idx},${ci})" class="btn-remove-inline">×</button></div>`).join('')}</div><div class="card-add-row"><input id="ep-card" placeholder="4821" maxlength="4" class="input-card"/><button class="btn-secondary" onclick="addCard(${idx})">Añadir</button></div></div>${DB.persons.length>1?`<button class="btn-danger" onclick="removePerson(${idx})">Eliminar persona</button>`:''}<div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="savePerson(${idx})">Guardar</button></div>`);}
 function pickPersonColor(idx,color,el){DB.persons[idx].color=color;document.querySelectorAll('#ep-colors .color-swatch').forEach(s=>s.classList.remove('selected'));el.classList.add('selected');}
 function addCard(idx){const v=document.getElementById('ep-card').value.trim();if(v.length!==4||isNaN(v)){showToast('Introduce 4 dígitos');return;}if(!DB.persons[idx].cards)DB.persons[idx].cards=[];DB.persons[idx].cards.push(v);DB.knowledge.cards[v]=DB.persons[idx].id;editPerson(idx);}
 function removeCard(idx,ci){const c=DB.persons[idx].cards[ci];DB.persons[idx].cards.splice(ci,1);delete DB.knowledge.cards[c];editPerson(idx);}
@@ -1240,7 +1249,9 @@ function importData(){
 function confirmImport(){
   const imported=window._pendingImport;
   if(!imported){closeModal();return;}
+  delete imported.devMode;
   DB=Object.assign({},DB,imported);
+  DB.devMode=false;
   if(imported.visionKey)DB.visionKey=imported.visionKey;
   if(imported.groqKey)DB.groqKey=imported.groqKey;
   // Asegurar campos que podrían no estar en exports antiguos
@@ -1440,6 +1451,7 @@ const GistSync = {
     // Nunca sobreescribir claves sensibles con datos del Gist
     delete remote.visionKey; delete remote.groqKey;
     delete remote.gistToken; delete remote.apiKey;
+    delete remote.devMode;
     DB = Object.assign({}, DB, remote);
     if(vk) DB.gistToken=vk;
     if(gi) DB.gistId=gi;
@@ -1457,9 +1469,24 @@ const GistSync = {
 
 function applyReadOnlyUI(){
   if(!GistSync.isReadOnly()) return;
-  // Ocultar botones de acción excepto despensa y asistente
-  document.querySelectorAll('.upload-zone,.btn-add-ticket,.btn-add-expense,.btn-settle,.btn-save,.settle-btn').forEach(el=>el.style.display='none');
-  // Banner de solo lectura si no existe ya
+  // Ocultar todos los controles de acción
+  const selectors=[
+    '.upload-zone','.btn-add-ticket','.btn-add-expense',
+    '.btn-settle','.btn-save','.settle-btn',
+    '.btn-delete-ticket','.btn-delete','.delete-btn',
+    '.ticket-delete-btn','.card-delete-btn',
+    '[onclick*="deleteTicket"],[onclick*="deleteExpense"],[onclick*="deleteCard"]',
+    '[onclick*="openTicketEditor"],[onclick*="openManualExpense"]',
+    '[onclick*="openScanner"],[onclick*="openCamera"]',
+    '.add-ticket-btn,.add-expense-btn,.scan-btn',
+    '.inv-archive-btn'
+  ];
+  selectors.forEach(s=>{
+    try{ document.querySelectorAll(s).forEach(el=>el.style.display='none'); }catch(e){}
+  });
+  // Deshabilitar checkboxes de despensa
+  document.querySelectorAll('.inv-check').forEach(el=>el.disabled=true);
+  // Banner si no existe
   if(!document.getElementById('readonly-banner')){
     const b=document.createElement('div');
     b.id='readonly-banner';
@@ -1467,6 +1494,8 @@ function applyReadOnlyUI(){
     b.textContent='Modo visualización — solo lectura';
     document.body.prepend(b);
   }
+  // Compensar el banner en el scroll
+  document.getElementById('view').style.paddingTop='36px';
 }
 
 async function gistActualizar(){
