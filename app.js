@@ -28,7 +28,7 @@ function hideOCRLoading(){document.getElementById('ocr-loading').style.display='
 function hideSplash(){const s=document.getElementById('splash');s.classList.add('hidden');setTimeout(()=>s.style.display='none',450);}
 
 let currentScreen='home';
-function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();applyReadOnlyUI();}
+function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
 let setupStep=-1,setupPersonCount=2;
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
@@ -655,6 +655,7 @@ function renderHome(){
     <div class="recent-label">Últimas actividades</div>
     ${recent.length===0?`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/></svg><h3>Sin actividad todavía</h3><p>Sube tu primer ticket o añade un gasto manual</p></div>`:recent.map(renderTicketListItem).join('')}
     ${renderPredictionsWidget()}`;
+  applyReadOnlyUI();
 }
 
 function renderTicketListItem(t){
@@ -682,12 +683,11 @@ function renderTickets(){
   const all=DB.tickets.slice().reverse();const active=all.filter(t=>!t.settled);const past=all.filter(t=>t.settled);
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Tickets</h1><p>${active.length} activos</p></div>
-    ${RO?'':`<div class="upload-zone" onclick="triggerFileGallery()"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3"/><polyline points="12 8 12 16"/><polyline points="8 12 12 8 16 12"/></svg><h3>Subir ticket</h3></div>`}
-
-    <div class="upload-actions"><button class="btn-secondary" onclick="triggerCamera()">Cámara</button><button class="btn-secondary" onclick="openManualTicket()">Manual</button></div>
+    ${RO?'':`<div class="upload-zone" onclick="triggerFileGallery()"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="3"/><polyline points="12 8 12 16"/><polyline points="8 12 12 8 16 12"/></svg><h3>Subir ticket</h3></div><div class="upload-actions"><button class="btn-secondary" onclick="triggerCamera()">Cámara</button><button class="btn-secondary" onclick="openManualTicket()">Manual</button></div>`}
     <div class="list-spacer"></div>
     ${active.length===0?`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/></svg><h3>Sin tickets activos</h3><p>Sube una foto para empezar</p></div>`:active.map(renderTicketListItem).join('')}
     ${past.length>0?`<div class="recent-label section-past"><span>Tickets pasados</span><span class="section-count">${past.length}</span></div><div class="past-list">${past.map(renderTicketListItem).join('')}</div>`:''}`;
+  applyReadOnlyUI();
   const zone=document.querySelector('.upload-zone');
   if(zone){zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('drag')});zone.addEventListener('dragleave',()=>zone.classList.remove('drag'));zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('drag');if(e.dataTransfer.files[0])processFile(e.dataTransfer.files[0]);});}
 }
@@ -874,6 +874,7 @@ function renderBalance(){
     <div class="balance-persons-grid">${DB.persons.map(p=>`<div class="stat-card stat-card-person" style="--person-color:${p.color}"><div class="stat-label">${p.name}</div><div class="stat-value">${fmt(paid[p.id]||0)}</div></div>`).join('')}</div>
     <div class="recent-label">Historial</div>
     ${settlements.length===0?`<div class="empty-state"><p>Sin liquidaciones todavía</p></div>`:settlements.map(s=>`<div class="history-settle"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg><div class="settle-date">${fmtDate(s.date)}</div><div class="settle-info">${s.msg}</div></div>`).join('')}`;
+  applyReadOnlyUI();
 }
 function settleAccounts(){const {owes,amount}=calcBalance();if(amount<0.01){showToast('No hay deuda que saldar');return;}openModal(`<div class="modal-title">¿Está todo Clarito?</div><p class="modal-body-text">Se registrará la liquidación a día de hoy.</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-primary" onclick="confirmSettle()">Confirmar</button></div>`);}
 function confirmSettle(){const btn=document.querySelector('.btn-primary[onclick="confirmSettle()"]');if(btn){btn.disabled=true;btn.style.opacity='0.5';}const {owes,amount}=calcBalance();if(amount<0.01){closeModal();return;}const creditor=DB.persons.find(p=>p.id!==owes);if(!owes||!creditor){closeModal();return;}DB.settlements.push({id:uid(),date:new Date().toISOString(),msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor.name}`,amount,owes});DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});S.set('settledTicketIds',DB.tickets.filter(t=>t.settled).map(t=>t.id));saveDB();closeModal();showToast('Todo está Clarito',3000);currentScreen='balance';renderBalance();}
@@ -931,6 +932,7 @@ function renderStats(){
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
     ${topProds.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}</details>`:''}`;
   setTimeout(()=>{document.querySelectorAll('.inv-archive-btn').forEach(btn=>{btn.onclick=()=>archiveDespensa(btn.dataset.key);});},0);
+  applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
 function renderInventorySection(){
@@ -1117,6 +1119,7 @@ function renderSettings(){
     </div>
     ${DB.devMode?renderDevSettings():''}
     <p class="settings-footer">Clarito · Datos guardados localmente</p>`;
+  applyReadOnlyUI();
 }
 function renderDevSettings(){return`
   <div class="settings-section"><div class="settings-section-title">Sincronización Gist</div><div class="settings-group">
@@ -1469,33 +1472,16 @@ const GistSync = {
 
 function applyReadOnlyUI(){
   if(!GistSync.isReadOnly()) return;
-  // Ocultar todos los controles de acción
-  const selectors=[
-    '.upload-zone','.btn-add-ticket','.btn-add-expense',
-    '.btn-settle','.btn-save','.settle-btn',
-    '.btn-delete-ticket','.btn-delete','.delete-btn',
-    '.ticket-delete-btn','.card-delete-btn',
-    '[onclick*="deleteTicket"],[onclick*="deleteExpense"],[onclick*="deleteCard"]',
-    '[onclick*="openTicketEditor"],[onclick*="openManualExpense"]',
-    '[onclick*="openScanner"],[onclick*="openCamera"]',
-    '.add-ticket-btn,.add-expense-btn,.scan-btn',
-    '.inv-archive-btn'
-  ];
-  selectors.forEach(s=>{
-    try{ document.querySelectorAll(s).forEach(el=>el.style.display='none'); }catch(e){}
-  });
-  // Deshabilitar checkboxes de despensa
-  document.querySelectorAll('.inv-check').forEach(el=>el.disabled=true);
-  // Banner si no existe
+  // Banner sticky dentro del flow del view (no fixed, no desplaza header)
   if(!document.getElementById('readonly-banner')){
     const b=document.createElement('div');
     b.id='readonly-banner';
-    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:500;background:rgba(124,110,245,0.15);border-bottom:1px solid rgba(124,110,245,0.3);padding:6px 16px;font-size:12px;color:var(--txt2);text-align:center;backdrop-filter:blur(8px)';
-    b.textContent='Modo visualización — solo lectura';
-    document.body.prepend(b);
+    b.style.cssText='background:rgba(124,110,245,0.12);border-bottom:1px solid rgba(124,110,245,0.25);padding:7px 16px;font-size:12px;color:#a599f5;text-align:center;letter-spacing:.2px;';
+    b.textContent='👁 Modo visualización — solo lectura';
+    const view=document.getElementById('view');
+    if(view.firstChild) view.insertBefore(b,view.firstChild);
+    else view.appendChild(b);
   }
-  // Compensar el banner en el scroll
-  document.getElementById('view').style.paddingTop='36px';
 }
 
 async function gistActualizar(){
