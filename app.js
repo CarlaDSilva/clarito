@@ -103,8 +103,8 @@ function setupImportFile(input){
           <div class="setup-summary-row"><span style="color:var(--txt2)">Tickets</span><strong>${tickets}</strong></div>
           <div class="setup-summary-row"><span style="color:var(--txt2)">Gastos manuales</span><strong>${expenses}</strong></div>
         </div>
-        <p style="font-size:13px;color:var(--txt2)">Las claves API no se incluyen en el JSON — tendrás que introducirlas después en Ajustes.</p>
-        <button class="btn-primary" onclick="setupImportConfirm(${JSON.stringify(JSON.stringify(data)).replace(/</g,'&lt;')})">Importar estos datos →</button>
+        <p style="font-size:13px;color:var(--txt2)">Las claves API se restaurarán del JSON automáticamente.</p>
+        <button class="btn-primary" onclick="setupImportConfirm()">Importar estos datos →</button>
         <button class="btn-secondary" onclick="setupStep=-1;renderSetupStep()" style="margin-top:10px">← Atrás</button>`;
       window._setupImportData=data;
     }catch{showToast('Error leyendo el archivo');}
@@ -113,9 +113,10 @@ function setupImportFile(input){
 }
 function setupImportConfirm(){
   const data=window._setupImportData;if(!data)return;
-  const vk=DB.visionKey;const gk=DB.groqKey;
   DB=Object.assign({},DB,data);
-  if(vk)DB.visionKey=vk;if(gk)DB.groqKey=gk;
+  // Restaurar claves del JSON si existen
+  if(data.visionKey)DB.visionKey=data.visionKey;
+  if(data.groqKey)DB.groqKey=data.groqKey;
   saveDB();
   document.getElementById('setup-screen').style.display='none';
   document.getElementById('app').style.display='flex';
@@ -1150,6 +1151,8 @@ function confirmImport(){
   const imported=window._pendingImport;
   if(!imported){closeModal();return;}
   DB=Object.assign({},DB,imported);
+  if(imported.visionKey)DB.visionKey=imported.visionKey;
+  if(imported.groqKey)DB.groqKey=imported.groqKey;
   // Asegurar campos que podrían no estar en exports antiguos
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.aiQuestions) DB.aiQuestions=[];
