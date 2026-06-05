@@ -30,7 +30,7 @@ function hideSplash(){const s=document.getElementById('splash');s.classList.add(
 let currentScreen='home';
 function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
-let setupStep=-1,setupPersonCount=2;
+let setupStep=-1,setupPersonCount=2,_homeMonthOffset=0;
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
 function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=-1;renderSetupStep();}
 function renderSetupStep(){
@@ -639,10 +639,43 @@ function triggerCamera(){document.getElementById('camera-input').click();}
 function triggerFileGallery(){document.getElementById('file-input').click();}
 
 // ── HOME ──────────────────────────────────────────────────────
+function _getMonthData(offset){
+  const now=new Date();
+  const d=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  const yr=d.getFullYear(),mo=d.getMonth();
+  const label=d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  const tickets=DB.tickets.filter(t=>{const td=new Date(t.date);return td.getFullYear()===yr&&td.getMonth()===mo;});
+  const expenses=DB.expenses.filter(t=>{const td=new Date(t.date);return td.getFullYear()===yr&&td.getMonth()===mo;});
+  const all=[...tickets,...expenses];
+  const total=all.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
+  const byPerson={};
+  DB.persons.forEach(p=>{byPerson[p.id]=0;});
+  all.forEach(t=>{
+    const sp=t.split??0.5;
+    DB.persons.forEach((p,i)=>{
+      const share=i===0?(typeof sp==='number'?sp:0.5):(typeof sp==='number'?1-sp:0.5);
+      byPerson[p.id]+=(parseFloat(t.total)||0)*share;
+    });
+  });
+  return{label,total,byPerson,isCurrentMonth:offset===0};
+}
+
+function homeMonthNav(dir){
+  const newOffset=_homeMonthOffset+dir;
+  if(newOffset>0) return; // no future months
+  if(newOffset<-11) return; // max 12 months back
+  _homeMonthOffset=newOffset;
+  renderHome();
+}
+
 function renderHome(){
   const RO=GistSync.isReadOnly();
   const bal=calcBalance();
   const recent=[...DB.tickets,...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6);
+  const md=_getMonthData(_homeMonthOffset);
+  const isCurrentMonth=_homeMonthOffset===0;
+  const canGoBack=_homeMonthOffset>-11;
+  const canGoForward=_homeMonthOffset<0;
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><div class="header-brand"><img src="icon.png" class="header-logo" onclick="onLogoTap()" onerror="this.style.display='none'"/><h1>Clarito</h1></div></div>
     <div class="balance-hero">
@@ -654,6 +687,24 @@ function renderHome(){
         ${DB.persons.map(p=>`<div class="person-row"><div class="person-dot" style="background:${p.color}"></div><div class="person-name">${p.name}</div><div class="person-amount">${fmt(bal.paid[p.id]||0)}</div></div>`).join('')}
       </div>
     </div>
+    <div class="month-cards-wrap" id="month-cards-wrap">
+      <div class="month-nav-row">
+        <button class="month-nav-btn" onclick="homeMonthNav(-1)" ${canGoBack?'':'disabled'}>&#8249;</button>
+        <span class="month-nav-label">${md.label}</span>
+        <button class="month-nav-btn" onclick="homeMonthNav(1)" ${canGoForward?'':'disabled'} style="opacity:${canGoForward?1:0.2}">&#8250;</button>
+      </div>
+      <div class="month-cards" id="month-cards">
+        <div class="month-card month-card-total">
+          <div class="mc-label">Gastado ${isCurrentMonth?'este mes':'este mes'}</div>
+          <div class="mc-amount">${fmt(md.total)}</div>
+        </div>
+        ${DB.persons.map(p=>`
+        <div class="month-card" style="--person-color:${p.color}">
+          <div class="mc-label">${p.name}</div>
+          <div class="mc-amount mc-person">${fmt(md.byPerson[p.id]||0)}</div>
+        </div>`).join('')}
+      </div>
+    </div>
     <div class="quick-actions">
       ${RO?"":`<button class="qa-btn" onclick="showScreen('tickets')"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Subir ticket</span></button>`}
       ${RO?"":`<button class="qa-btn" onclick="openManualExpense()"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Gasto manual</span></button>`}
@@ -663,6 +714,19 @@ function renderHome(){
     <div class="recent-label">Últimas actividades</div>
     ${recent.length===0?`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/></svg><h3>Sin actividad todavía</h3><p>Sube tu primer ticket o añade un gasto manual</p></div>`:recent.map(renderTicketListItem).join('')}
     ${renderPredictionsWidget()}`;
+  // Swipe gesture on month cards
+  const wrap=document.getElementById('month-cards-wrap');
+  if(wrap){
+    let sx=0;
+    wrap.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;},{passive:true});
+    wrap.addEventListener('touchend',e=>{
+      const dx=e.changedTouches[0].clientX-sx;
+      if(Math.abs(dx)>40){
+        if(dx<0&&canGoBack) homeMonthNav(-1);
+        else if(dx>0&&canGoForward) homeMonthNav(1);
+      }
+    },{passive:true});
+  }
   applyReadOnlyUI();
 }
 
