@@ -28,9 +28,9 @@ function hideOCRLoading(){document.getElementById('ocr-loading').style.display='
 function hideSplash(){const s=document.getElementById('splash');s.classList.add('hidden');setTimeout(()=>s.style.display='none',450);}
 
 let currentScreen='home';
-function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
+function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;if(name==='stats')_statsMonthOffset=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
-let setupStep=-1,setupPersonCount=2,_homeMonthOffset=0;
+let setupStep=-1,setupPersonCount=2,_statsMonthOffset=0;
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
 function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=-1;renderSetupStep();}
 function renderSetupStep(){
@@ -639,43 +639,10 @@ function triggerCamera(){document.getElementById('camera-input').click();}
 function triggerFileGallery(){document.getElementById('file-input').click();}
 
 // ── HOME ──────────────────────────────────────────────────────
-function _getMonthData(offset){
-  const now=new Date();
-  const d=new Date(now.getFullYear(),now.getMonth()+offset,1);
-  const yr=d.getFullYear(),mo=d.getMonth();
-  const label=d.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
-  const tickets=DB.tickets.filter(t=>{const td=new Date(t.date);return td.getFullYear()===yr&&td.getMonth()===mo;});
-  const expenses=DB.expenses.filter(t=>{const td=new Date(t.date);return td.getFullYear()===yr&&td.getMonth()===mo;});
-  const all=[...tickets,...expenses];
-  const total=all.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
-  const byPerson={};
-  DB.persons.forEach(p=>{byPerson[p.id]=0;});
-  all.forEach(t=>{
-    const sp=t.split??0.5;
-    DB.persons.forEach((p,i)=>{
-      const share=i===0?(typeof sp==='number'?sp:0.5):(typeof sp==='number'?1-sp:0.5);
-      byPerson[p.id]+=(parseFloat(t.total)||0)*share;
-    });
-  });
-  return{label,total,byPerson,isCurrentMonth:offset===0};
-}
-
-function homeMonthNav(dir){
-  const newOffset=_homeMonthOffset+dir;
-  if(newOffset>0) return; // no future months
-  if(newOffset<-11) return; // max 12 months back
-  _homeMonthOffset=newOffset;
-  renderHome();
-}
-
 function renderHome(){
   const RO=GistSync.isReadOnly();
   const bal=calcBalance();
   const recent=[...DB.tickets,...DB.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,6);
-  const md=_getMonthData(_homeMonthOffset);
-  const isCurrentMonth=_homeMonthOffset===0;
-  const canGoBack=_homeMonthOffset>-11;
-  const canGoForward=_homeMonthOffset<0;
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><div class="header-brand"><img src="icon.png" class="header-logo" onclick="onLogoTap()" onerror="this.style.display='none'"/><h1>Clarito</h1></div></div>
     <div class="balance-hero">
@@ -687,24 +654,6 @@ function renderHome(){
         ${DB.persons.map(p=>`<div class="person-row"><div class="person-dot" style="background:${p.color}"></div><div class="person-name">${p.name}</div><div class="person-amount">${fmt(bal.paid[p.id]||0)}</div></div>`).join('')}
       </div>
     </div>
-    <div class="month-cards-wrap" id="month-cards-wrap">
-      <div class="month-nav-row">
-        <button class="month-nav-btn" onclick="homeMonthNav(-1)" ${canGoBack?'':'disabled'}>&#8249;</button>
-        <span class="month-nav-label">${md.label}</span>
-        <button class="month-nav-btn" onclick="homeMonthNav(1)" ${canGoForward?'':'disabled'} style="opacity:${canGoForward?1:0.2}">&#8250;</button>
-      </div>
-      <div class="month-cards" id="month-cards">
-        <div class="month-card month-card-total">
-          <div class="mc-label">Gastado ${isCurrentMonth?'este mes':'este mes'}</div>
-          <div class="mc-amount">${fmt(md.total)}</div>
-        </div>
-        ${DB.persons.map(p=>`
-        <div class="month-card" style="--person-color:${p.color}">
-          <div class="mc-label">${p.name}</div>
-          <div class="mc-amount mc-person">${fmt(md.byPerson[p.id]||0)}</div>
-        </div>`).join('')}
-      </div>
-    </div>
     <div class="quick-actions">
       ${RO?"":`<button class="qa-btn" onclick="showScreen('tickets')"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Subir ticket</span></button>`}
       ${RO?"":`<button class="qa-btn" onclick="openManualExpense()"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg><span>Gasto manual</span></button>`}
@@ -714,19 +663,6 @@ function renderHome(){
     <div class="recent-label">Últimas actividades</div>
     ${recent.length===0?`<div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2"/></svg><h3>Sin actividad todavía</h3><p>Sube tu primer ticket o añade un gasto manual</p></div>`:recent.map(renderTicketListItem).join('')}
     ${renderPredictionsWidget()}`;
-  // Swipe gesture on month cards
-  const wrap=document.getElementById('month-cards-wrap');
-  if(wrap){
-    let sx=0;
-    wrap.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;},{passive:true});
-    wrap.addEventListener('touchend',e=>{
-      const dx=e.changedTouches[0].clientX-sx;
-      if(Math.abs(dx)>40){
-        if(dx<0&&canGoBack) homeMonthNav(-1);
-        else if(dx>0&&canGoForward) homeMonthNav(1);
-      }
-    },{passive:true});
-  }
   applyReadOnlyUI();
 }
 
@@ -958,36 +894,59 @@ function settleAccounts(){if(GistSync.isReadOnly()){showToast('Modo solo lectura
 function confirmSettle(){const btn=document.querySelector('.btn-primary[onclick="confirmSettle()"]');if(btn){btn.disabled=true;btn.style.opacity='0.5';}const {owes,amount}=calcBalance();if(amount<0.01){closeModal();return;}const creditor=DB.persons.find(p=>p.id!==owes);if(!owes||!creditor){closeModal();return;}DB.settlements.push({id:uid(),date:new Date().toISOString(),msg:`${personName(owes)} pagó ${fmt(amount)} a ${creditor.name}`,amount,owes});DB.tickets.forEach(t=>{if(t.confirmed)t.settled=true;});DB.expenses.forEach(e=>{if(e.confirmed)e.settled=true;});S.set('settledTicketIds',DB.tickets.filter(t=>t.settled).map(t=>t.id));saveDB();closeModal();showToast('Todo está Clarito',3000);currentScreen='balance';renderBalance();}
 
 // ── STATS ─────────────────────────────────────────────────────
+function computeMonthStats(offset){
+  const now=new Date();
+  const target=new Date(now.getFullYear(),now.getMonth()+offset,1);
+  const yr=target.getFullYear(), mo=target.getMonth();
+  const label=target.toLocaleDateString('es-ES',{month:'long',year:'numeric'});
+  const allT=DB.tickets.filter(t=>t.confirmed);
+  const monthT=allT.filter(t=>{
+    if(!t.date) return false;
+    const d=new Date(t.date);
+    return !isNaN(d)&&d.getFullYear()===yr&&d.getMonth()===mo;
+  });
+  const total=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
+  const byPerson={},paidOut={};
+  DB.persons.forEach(p=>{byPerson[p.id]=0;paidOut[p.id]=0;});
+  monthT.forEach(t=>{
+    paidOut[t.payer]=(paidOut[t.payer]||0)+(parseFloat(t.total)||0);
+    (t.products||[]).forEach(prod=>{
+      const price=parseFloat(prod.finalPrice||prod.price||0);
+      if(!price) return;
+      if(prod.assignedTo) byPerson[prod.assignedTo]=(byPerson[prod.assignedTo]||0)+price;
+      else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);byPerson[p.id]=(byPerson[p.id]||0)+price*pct/100;});
+    });
+  });
+  let expTotal=0;
+  DB.expenses.filter(e=>e.confirmed&&e.date).forEach(e=>{
+    const d=new Date(e.date);
+    if(isNaN(d)||d.getFullYear()!==yr||d.getMonth()!==mo) return;
+    const amt=parseFloat(e.total||0);if(!amt) return;
+    expTotal+=amt;
+    paidOut[e.payer]=(paidOut[e.payer]||0)+amt;
+    const s1=e.split1??50;
+    DB.persons.forEach((p,i)=>{const pct=i===0?s1:100-s1;byPerson[p.id]=(byPerson[p.id]||0)+amt*pct/100;});
+  });
+  return{label,total:total+expTotal,byPerson,paidOut,ticketCount:monthT.length};
+}
+
+function statsMonthNav(dir){
+  const n=_statsMonthOffset+dir;
+  if(n>0||n<-11) return;
+  _statsMonthOffset=n;
+  renderStats();
+}
+
 function renderStats(){
   const now=new Date();
   const thisYear=now.getFullYear(), thisMon=now.getMonth();
   const allT=DB.tickets.filter(t=>t.confirmed);
-  // Filtrar tickets de este mes de forma robusta
-  const monthT=allT.filter(t=>{
-    if(!t.date) return false;
-    const d=new Date(t.date);
-    return !isNaN(d)&&d.getFullYear()===thisYear&&d.getMonth()===thisMon;
-  });
-  const monthTotal=monthT.reduce((s,t)=>s+(parseFloat(t.total)||0),0);
-  const monthByPerson={},monthPaidOut={};
-  DB.persons.forEach(p=>{monthByPerson[p.id]=0;monthPaidOut[p.id]=0;});
-  monthT.forEach(t=>{
-    monthPaidOut[t.payer]=(monthPaidOut[t.payer]||0)+(parseFloat(t.total)||0);
-    (t.products||[]).forEach(prod=>{
-      const price=parseFloat(prod.finalPrice||prod.price||0);
-      if(!price) return;
-      if(prod.assignedTo) monthByPerson[prod.assignedTo]=(monthByPerson[prod.assignedTo]||0)+price;
-      else DB.persons.forEach(p=>{const pct=p.id===DB.persons[0].id?(prod.pct1||50):100-(prod.pct1||50);monthByPerson[p.id]=(monthByPerson[p.id]||0)+price*pct/100;});
-    });
-  });
-  DB.expenses.filter(e=>e.confirmed&&e.date).forEach(e=>{
-    const d=new Date(e.date);
-    if(isNaN(d)||d.getFullYear()!==thisYear||d.getMonth()!==thisMon) return;
-    const amt=parseFloat(e.total||0);if(!amt) return;
-    monthPaidOut[e.payer]=(monthPaidOut[e.payer]||0)+amt;
-    const s1=e.split1??50;
-    DB.persons.forEach((p,i)=>{const pct=i===0?s1:100-s1;monthByPerson[p.id]=(monthByPerson[p.id]||0)+amt*pct/100;});
-  });
+  const ms=computeMonthStats(_statsMonthOffset);
+  const monthTotal=ms.total;
+  const monthByPerson=ms.byPerson;
+  const monthPaidOut=ms.paidOut;
+  const canGoBack=_statsMonthOffset>-11;
+  const canGoForward=_statsMonthOffset<0;
   const storeMap={};allT.forEach(t=>{if(t.store)storeMap[t.store]=(storeMap[t.store]||0)+(parseFloat(t.total)||0);});
   const storeSorted=Object.entries(storeMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const prodCount={};allT.forEach(t=>(t.products||[]).forEach(p=>{const k=p.name||p.rawName||'';if(!k)return;prodCount[k]=(prodCount[k]||0)+(p.qty||1);}));
@@ -995,8 +954,13 @@ function renderStats(){
   const anomalies=detectAnomalies();
   document.getElementById('view').innerHTML=`
     <div class="screen-header"><h1>Estadísticas</h1><p>Análisis del hogar</p></div>
-    <div class="stats-grid"><div class="stat-card"><div class="stat-label">Este mes</div><div class="stat-value">${fmt(monthTotal)}</div></div><div class="stat-card"><div class="stat-label">Tickets totales</div><div class="stat-value">${allT.length}</div></div></div>
-    <div class="recent-label">Gasto este mes por persona</div>
+    <div class="month-nav-row" id="stats-month-nav">
+      <button class="month-nav-btn" onclick="statsMonthNav(-1)" ${canGoBack?'':'disabled'}>&#8249;</button>
+      <span class="month-nav-label">${ms.label}</span>
+      <button class="month-nav-btn" onclick="statsMonthNav(1)" ${canGoForward?'':'disabled'}>&#8250;</button>
+    </div>
+    <div class="stats-grid"><div class="stat-card"><div class="stat-label">Gastado</div><div class="stat-value">${fmt(monthTotal)}</div></div><div class="stat-card"><div class="stat-label">Tickets del mes</div><div class="stat-value">${ms.ticketCount}</div></div></div>
+    <div class="recent-label">Gasto por persona</div>
     <div class="persons-stats-grid">${DB.persons.map(p=>`<div class="stat-card stat-card-person" style="--person-color:${p.color}"><div class="stat-label">${p.name}</div><div class="stat-value stat-value-person">${fmt(monthByPerson[p.id]||0)}</div><div class="stat-paid-out">Pagó en caja: ${fmt(monthPaidOut[p.id]||0)}</div></div>`).join('')}</div>
     ${anomalies.length?`<div class="anomalies-list">${anomalies.map(a=>`<div class="anomaly-chip">${a}</div>`).join('')}</div>`:''}
     <div class="inv-section-header">
@@ -1010,6 +974,19 @@ function renderStats(){
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
     ${topProds.length?`<details class="stats-details"><summary class="stats-details-summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="6 9 12 15 18 9"/></svg>Más estadísticas</summary>${topProds.length?`<div class="recent-label">Productos más comprados</div><div class="bar-chart">${topProds.map(([name,qty])=>`<div class="bar-row"><div class="bar-name">${name}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(qty/topProds[0][1]*100)}%;background:var(--accent)"></div></div><div class="bar-amt">${qty}x</div></div>`).join('')}</div>`:''}</details>`:''}`;
   setTimeout(()=>{document.querySelectorAll('.inv-archive-btn').forEach(btn=>{btn.onclick=()=>archiveDespensa(btn.dataset.key);});},0);
+  // Swipe en la zona de navegación de meses
+  const nav=document.getElementById('stats-month-nav');
+  if(nav){
+    let sx=0;
+    nav.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;},{passive:true});
+    nav.addEventListener('touchend',e=>{
+      const dx=e.changedTouches[0].clientX-sx;
+      if(Math.abs(dx)>40){
+        if(dx<0&&_statsMonthOffset>-11) statsMonthNav(-1);
+        else if(dx>0&&_statsMonthOffset<0) statsMonthNav(1);
+      }
+    },{passive:true});
+  }
   applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
