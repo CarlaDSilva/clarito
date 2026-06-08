@@ -1079,22 +1079,28 @@ function renderStats(){
   applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
-let _despensaShowAll=false;
-function toggleDespensaAll(){_despensaShowAll=!_despensaShowAll;renderStats();}
 function renderInventorySection(){
   const preds=getPredictions();
   const archived=DB.knowledge?.archivedDespensa||[];
   const bought=new Set(DB.knowledge?.boughtDespensa||[]);
 
-  // Lista activa: solo productos que se agotan en 7 días o menos
+  // Dos secciones: urgente (<=7 días) y el resto. Sin límite de cantidad.
   const urgent=preds.filter(p=>p.days<=7);
-  const shown=_despensaShowAll?preds:urgent;
-  const activeSection=preds.length===0
-    ?`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`
-    :(shown.length===0&&!_despensaShowAll
-        ?`<div class="empty-state"><p>Nada a punto de agotarse</p></div>`
-        :buildInventoryRows(shown, bought))
-      +`<button class="btn-ghost despensa-toggle" onclick="toggleDespensaAll()">${_despensaShowAll?'Ver solo lo urgente':'Ver toda la despensa ('+preds.length+')'}</button>`;
+  const rest=preds.filter(p=>p.days>7);
+  let activeSection;
+  if(preds.length===0){
+    activeSection=`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`;
+  }else{
+    activeSection='';
+    if(urgent.length>0){
+      activeSection+=`<div class="inv-subsection-label">A punto de agotarse (${urgent.length})</div>`+buildInventoryRows(urgent, bought);
+    }else{
+      activeSection+=`<div class="inv-subsection-label">A punto de agotarse</div><div class="empty-state"><p>Nada a punto de agotarse</p></div>`;
+    }
+    if(rest.length>0){
+      activeSection+=`<div class="inv-subsection-label" style="margin-top:18px">Resto de la despensa (${rest.length})</div>`+buildInventoryRows(rest, bought);
+    }
+  }
 
   // Sección de archivados
   let archivedSection='';
