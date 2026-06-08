@@ -479,3 +479,11 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .mc-label{font-size:12px;color:var(--txt2);margin-bottom:6px;white-space:nowrap}
 .mc-amount{font-size:22px;font-weight:700;color:var(--txt0)}
 .mc-person{color:var(--person-color,var(--txt0))}
+
+/* ── MEJORAR TICKET ── */
+.mirror-warn{background:rgba(234,179,8,.1);border:1px solid rgba(234,179,8,.3);border-radius:var(--rad);padding:14px 16px}
+.mirror-warn-txt{font-size:14px;color:var(--txt1);margin-bottom:12px;line-height:1.4}
+.mirror-warn-btns{display:flex;gap:10px}
+.mirror-warn-btns button{flex:1;padding:10px;font-size:14px}
+
+.despensa-toggle{width:100%;margin-top:8px;color:var(--accent)}

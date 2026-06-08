@@ -178,7 +178,7 @@ function setupNext2(){DB.persons.forEach((p,i)=>{const n=document.getElementById
 function finishSetup(){saveDB();document.getElementById('setup-screen').style.display='none';document.getElementById('app').style.display='flex';showScreen('home');}
 
 function readExifOrientation(file){return new Promise(res=>{const r=new FileReader();r.onload=e=>{try{const v=new DataView(e.target.result);if(v.getUint16(0)!==0xFFD8){res(1);return;}let off=2;while(off<v.byteLength){const marker=v.getUint16(off);off+=2;const len=v.getUint16(off);if(marker===0xFFE1){if(v.getUint32(off+2)===0x45786966){const tiffOff=off+2+6;const le=v.getUint16(tiffOff)===0x4949;const ifdOff=tiffOff+(le?v.getUint32(tiffOff+4,le):v.getUint32(tiffOff+4,false));const entries=le?v.getUint16(ifdOff,le):v.getUint16(ifdOff,false);for(let i=0;i<entries;i++){const tag=v.getUint16(ifdOff+2+i*12,le);if(tag===0x0112){res(v.getUint16(ifdOff+2+i*12+8,le));return;}}}}off+=len;}}catch{}res(1);};r.readAsArrayBuffer(file.slice(0,64*1024));});}
-function resizeForOCR(file){return new Promise(async(res,rej)=>{const orient=await readExifOrientation(file).catch(()=>1);const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{URL.revokeObjectURL(url);const MAX=1600;let sw=img.naturalWidth,sh=img.naturalHeight;const swapped=orient>=5&&orient<=8;let w=swapped?sh:sw,h=swapped?sw:sh;if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.save();if(orient===2)ctx.transform(-1,0,0,1,w,0);else if(orient===3)ctx.transform(-1,0,0,-1,w,h);else if(orient===4)ctx.transform(1,0,0,-1,0,h);else if(orient===5)ctx.transform(0,1,1,0,0,0);else if(orient===6)ctx.transform(0,1,-1,0,h,0);else if(orient===7)ctx.transform(0,-1,-1,0,h,w);else if(orient===8)ctx.transform(0,-1,1,0,0,w);const dw=swapped?h:w,dh=swapped?w:h;ctx.drawImage(img,0,0,dw,dh);ctx.restore();const id=ctx.getImageData(0,0,w,h);const d=id.data;for(let i=0;i<d.length;i+=4){const g=Math.round(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);const v=Math.min(255,Math.max(0,Math.round((g-128)*1.5+128)));d[i]=d[i+1]=d[i+2]=v;}ctx.putImageData(id,0,0);res(c.toDataURL('image/jpeg',0.9).split(',')[1]);};img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));img.src=url;});}
+function resizeForOCR(file,denoise){return new Promise(async(res,rej)=>{const orient=await readExifOrientation(file).catch(()=>1);const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{URL.revokeObjectURL(url);const MAX=1600;let sw=img.naturalWidth,sh=img.naturalHeight;const swapped=orient>=5&&orient<=8;let w=swapped?sh:sw,h=swapped?sw:sh;if(w>h){if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}}else{if(h>MAX){w=Math.round(w*MAX/h);h=MAX;}}const c=document.createElement('canvas');c.width=w;c.height=h;const ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.save();if(orient===2)ctx.transform(-1,0,0,1,w,0);else if(orient===3)ctx.transform(-1,0,0,-1,w,h);else if(orient===4)ctx.transform(1,0,0,-1,0,h);else if(orient===5)ctx.transform(0,1,1,0,0,0);else if(orient===6)ctx.transform(0,1,-1,0,h,0);else if(orient===7)ctx.transform(0,-1,-1,0,h,w);else if(orient===8)ctx.transform(0,-1,1,0,0,w);const dw=swapped?h:w,dh=swapped?w:h;ctx.drawImage(img,0,0,dw,dh);ctx.restore();const id=ctx.getImageData(0,0,w,h);const d=id.data;if(denoise){for(let i=0;i<d.length;i+=4){const g=Math.round(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);let v;if(g<95)v=Math.round(g*0.55);else if(g>165)v=255;else v=Math.min(255,Math.round(128+(g-128)*2.2));d[i]=d[i+1]=d[i+2]=v;}}else{for(let i=0;i<d.length;i+=4){const g=Math.round(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);const v=Math.min(255,Math.max(0,Math.round((g-128)*1.5+128)));d[i]=d[i+1]=d[i+2]=v;}}ctx.putImageData(id,0,0);res(c.toDataURL('image/jpeg',0.9).split(',')[1]);};img.onerror=()=>rej(new Error('No se pudo cargar la imagen'));img.src=url;});}
 
 async function googleVisionExtract(b64){const key=DB.visionKey;if(!key)throw new Error('Sin Google Vision API key. Configúrala en Ajustes.');const body={requests:[{image:{content:b64},features:[{type:'DOCUMENT_TEXT_DETECTION',maxResults:1}]}]};const res=await fetch(`https://vision.googleapis.com/v1/images:annotate?key=${key}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'Vision HTTP '+res.status);}const data=await res.json();const text=data.responses?.[0]?.fullTextAnnotation?.text||'';if(!text.trim())throw new Error('No se detectó texto en la imagen');console.log('Vision OCR:',text.slice(0,400));return text;}
 
@@ -294,9 +294,62 @@ function parseTicketText(text){
     const preEnd=pUnitIdx>=0?pUnitIdx:start;
     const preH=(descIdx>=0&&descIdx<preEnd)?allLines.slice(descIdx+1,preEnd).map(l=>l.trim()).filter(l=>l&&!/^(p\.\s*unit|imp(orte)?)/i.test(l)):[];
     const body=[...preH,...allLines.slice(start,end_).map(l=>l.trim()).filter(l=>l&&!/^(p\.\s*unit|imp(orte)?|importe:)/i.test(l))];
-    const QI=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s\/\-'.%&]+?)\s+(\d{1,3}[.,]\d{2})$/;
+    // Extrae el nombre de producto de una línea que empieza por "N NOMBRE..." aunque tenga basura/precio al final
+    const QI=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑa-záéíóúñ0-9\s\/\-'.%&]+?)\s+(\d{1,3}[.,]\d{2})\b/;
+    // Detecta inicio de producto: "N NOMBRE" (sin requerir precio)
+    const QSTART=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s\/\-'.%&C]*[A-ZÁÉÍÓÚÑ0-9])/;
+    // Extrae el primer precio válido (formato X,XX) de cualquier parte de la línea
+    function firstPrice(s){const m=s.match(/(\d{1,3})[.,](\d{2})\b/);if(!m)return null;const v=parseFloat(m[1]+'.'+m[2]);return (v>=0&&v<200)?v:null;}
+    // Limpia el nombre: corta en el primer dígito-precio o basura no-ASCII
+    function mercadonaName(s){
+      // Quitar el "N " inicial
+      let n=s.replace(/^\d+\s+/,'');
+      // Cortar en el primer precio (X,XX o X.XX)
+      n=n.replace(/\s+\d{1,3}[.,]\d{2}.*$/,'');
+      // Cortar en basura no latina (texto espejo)
+      n=n.replace(/\s+[^\x00-\x7F\u00C0-\u024F].*$/,'');
+      // Quitar caracteres sueltos no-ascii al final
+      n=n.replace(/[^A-ZÁÉÍÓÚÑ0-9\s\/\-'.%&C]+.*$/,'');
+      return n.trim();
+    }
     const entries=[],allPrices=[];
-    for(const l of body){const t=l.trim();if(/^(entrada|salida)/i.test(t))continue;const im=t.match(QI);if(im){const qty=parseInt(im[1]),name=im[2].trim(),unitP=parseFloat(im[3].replace(',','.'));if(name.length>=3&&qty>=1&&qty<=99){entries.push({name,qty,raw:t,_inlinePrice:unitP});allPrices.push({v:unitP,isInlineUnit:true,skipTotal:parseFloat((unitP*qty).toFixed(2))});continue;}}const pm=t.match(/^(\d{1,4}[.,]\d{2})$/);if(pm){const v=parseFloat(pm[1].replace(',','.'));const last=allPrices[allPrices.length-1];if(last&&last.isInlineUnit&&Math.abs(last.skipTotal-v)<0.02)continue;allPrices.push({v});continue;}const QN=/^(\d+)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ0-9\s\/\-'.%&C]+)$/;const m=t.match(QN);if(m){entries.push({name:m[2].trim(),qty:parseInt(m[1]),raw:t});continue;}if(/^[A-ZÁÉÍÓÚÑ]/.test(t)&&t.length>=3&&!isPrice(t)&&!/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n|p\.\s*unit)/i.test(t)&&!/^[a-záéíóúñ]{2,}\s+[a-z]/i.test(t))entries.push({name:t,qty:1,raw:t});}
+    for(const l of body){
+      const t=l.trim();
+      if(/^(entrada|salida|parking)/i.test(t))continue;
+      // ¿Es inicio de producto? "N NOMBRE..."
+      const sm=t.match(QSTART);
+      if(sm){
+        const qty=parseInt(sm[1]);
+        const name=mercadonaName(t);
+        const inlineP=firstPrice(t.replace(/^\d+\s+\S.*?(?=\d{1,3}[.,]\d{2})/,m=>m)); // precio tras el nombre
+        // Buscar precio en la misma línea (después del nombre)
+        const afterName=t.replace(/^\d+\s+/,'').replace(name,'');
+        const lineP=firstPrice(afterName);
+        if(name.length>=3&&qty>=1&&qty<=99){
+          if(lineP!=null){
+            entries.push({name,qty,raw:t,_inlinePrice:lineP});
+            allPrices.push({v:lineP,isInlineUnit:true,skipTotal:parseFloat((lineP*qty).toFixed(2))});
+          }else{
+            entries.push({name,qty,raw:t});
+          }
+          continue;
+        }
+      }
+      // ¿Es una línea de solo precio (posiblemente con basura)?
+      const pOnly=t.match(/^(\d{1,4}[.,]\d{2})\b/);
+      if(pOnly && !/[A-ZÁÉÍÓÚÑ]{3,}/.test(t)){
+        const v=parseFloat(pOnly[1].replace(',','.'));
+        const last=allPrices[allPrices.length-1];
+        if(last&&last.isInlineUnit&&Math.abs(last.skipTotal-v)<0.02)continue;
+        if(v>0&&v<200)allPrices.push({v});
+        continue;
+      }
+      // Nombre suelto en mayúsculas (sin cantidad delante)
+      if(/^[A-ZÁÉÍÓÚÑ]/.test(t)&&t.length>=3&&!isPrice(t)&&!/^(op:|factura|tel[eé]f|entrada|salida|parking|descripci[oó]n|p\.\s*unit|tarjeta|total|iva|base|cuota|importe)/i.test(t)){
+        const nm=mercadonaName('1 '+t);
+        if(nm.length>=3)entries.push({name:nm,qty:1,raw:t});
+      }
+    }
     const flatP=allPrices.filter(p=>!p.isInlineUnit).map(p=>p.v);let pi=0;const pending=[];
     for(const e of entries){if(e._inlinePrice!=null){const nm=cleanName(e.name);if(nm.length>=2)out.push(makeProduct(nm,e.raw,e._inlinePrice,e.qty));continue;}if(pi>=flatP.length){pending.push(e);continue;}const unitP=flatP[pi++];if(unitP===0&&e.name.toUpperCase().includes('PARKING'))continue;if(e.qty>1&&pi<flatP.length&&Math.abs(flatP[pi]-unitP*e.qty)<0.02)pi++;const nm=cleanName(e.name);if(nm.length>=2)out.push(makeProduct(nm,e.raw,unitP,e.qty));}
     let api=0;for(const e of pending){if(api>=afterTP.length)break;const nm=cleanName(e.name);if(nm.length>=2)out.push(makeProduct(nm,e.raw,afterTP[api++],e.qty));}
@@ -606,12 +659,18 @@ async function processFile(file){
   try{
     if(file.type==='application/pdf'){hideOCRLoading();showToast('Los PDFs no son compatibles. Usa el modo manual.',4000);openTicketEditor(getEmptyTicket());return;}
     setOCRStatus('Optimizando imagen...');
-    const b64=await resizeForOCR(file);
+    const b64=await resizeForOCR(file,false);window._lastFile=file;
     console.log('Imagen lista:',Math.round(b64.length*0.75/1024),'KB');
     let ocrText='';
     try{setOCRStatus('Leyendo ticket...');ocrText=await googleVisionExtract(b64);window._lastTicketB64=b64;if(!DB.visionStats)DB.visionStats={calls:0,firstCall:null};DB.visionStats.calls=(DB.visionStats.calls||0)+1;if(!DB.visionStats.firstCall)DB.visionStats.firstCall=new Date().toISOString().slice(0,10);S.set('visionStats',JSON.stringify(DB.visionStats));S.set('lastOCR',ocrText.slice(0,3000));}catch(ocrErr){console.warn('Google Vision falló:',ocrErr.message);setOCRStatus('Vision falló...');}
     let result;
-    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',result.products.length,'productos');}
+    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',result.products.length,'productos');
+      // Detectar texto invertido/espejo (ruido de fondo translúcido)
+      const lines=ocrText.split('\n').filter(l=>l.trim().length>2);
+      const garbageCount=lines.filter(l=>{const nl=(l.match(/[^\x00-\x7F\u00C0-\u024F\u20AC€.,\d\s\-\/()]/g)||[]).length;return nl>l.length*0.25;}).length;
+      window._lastFile=file;
+      result._hasMirrorNoise=garbageCount>=2;
+    }
     else{hideOCRLoading();showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);openTicketEditor(getEmptyTicket());return;}
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
@@ -736,6 +795,7 @@ function renderTicketEditor(){
       ${window._lastTicketB64?`<img id="ticket-thumb" src="data:image/jpeg;base64,${window._lastTicketB64}" class="ticket-thumb" onclick="showTicketImage()"/>`:`<img id="ticket-thumb" style="display:none" class="ticket-thumb" onclick="showTicketImage()"/>`}
       ${GistSync.isReadOnly()?'':'<button onclick="deleteCurrentTicket()" class="btn-text-danger">Eliminar</button>'}</div>
     <div class="te-body">
+      ${currentTicket._hasMirrorNoise&&window._lastFile?`<div class="te-section"><div class="mirror-warn"><div class="mirror-warn-txt">Se ha detectado texto de fondo que puede afectar la lectura.</div><div class="mirror-warn-btns"><button class="btn-secondary" onclick="currentTicket._hasMirrorNoise=false;renderTicketEditor()">Cancelar</button><button class="btn-primary" onclick="mejorarTicket()">Mejorar ticket</button></div></div></div>`:''}
       ${errorsHtml?`<div class="te-section">${errorsHtml}</div>`:''}
       <div class="te-section"><div class="te-section-title">Información</div>
         <div class="card">
@@ -840,6 +900,35 @@ function saveTicket(){
   closeTicketEditor();showToast('Ticket guardado');const ts=currentScreen==='tickets'?'tickets':'home';currentScreen=ts;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[ts]?.();GistSync.push();
 }
 function learnFromTicket(t){if(t.last4&&t.payer){DB.knowledge.cards[t.last4]=t.payer;const person=personById(t.payer);if(person){if(!person.cards)person.cards=[];if(!person.cards.includes(t.last4))person.cards.push(t.last4);}}(t.products||[]).forEach(prod=>{const key=normalizeKey(prod.name||'');if(!key)return;const ocrRaw=(prod.rawName||'').trim().toUpperCase();const ex=DB.knowledge.products[key]||{count:0,ocr_raw:[]};DB.knowledge.products[key]={person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,count:(ex.count||0)+1,category:prod.category,alias:prod.name,ocr_raw:ocrRaw&&!(ex.ocr_raw||[]).includes(ocrRaw)?[...(ex.ocr_raw||[]),ocrRaw]:(ex.ocr_raw||[])};const ocrStripped=ocrRaw.replace(/^\d+\s+/,'');[ocrRaw,ocrStripped].filter(Boolean).forEach(raw=>{const rk=normalizeKey(raw);if(rk&&rk!==key)DB.knowledge.products[rk]={...(DB.knowledge.products[rk]||{}),person:prod.assignedTo||null,shared:!prod.assignedTo,pct1:prod.pct1||50,alias:prod.name,ocr_raw:[raw]};});});}
+async function mejorarTicket(){
+  const file=window._lastFile;
+  if(!file){showToast('No hay imagen para reprocesar');return;}
+  showOCRLoading('Reduciendo ruido...');
+  try{
+    setOCRStatus('Reprocesando imagen...');
+    const b64=await resizeForOCR(file,true); // denoise=true
+    setOCRStatus('Leyendo ticket...');
+    let ocrText='';
+    try{ocrText=await googleVisionExtract(b64);window._lastTicketB64=b64;}catch(e){console.warn('Vision falló:',e.message);}
+    if(!ocrText){hideOCRLoading();showToast('No se pudo mejorar la lectura',3000);return;}
+    const result=parseTicketText(ocrText);
+    result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
+    result.type='ticket';
+    result.id=currentTicket.id;
+    result.payer=currentTicket.payer;
+    result.confirmed=false;
+    result.createdAt=currentTicket.createdAt;
+    if(result.last4&&DB.knowledge.cards[result.last4])result.payer=DB.knowledge.cards[result.last4];
+    // Recalcular si aún hay ruido
+    const lines=ocrText.split('\n').filter(l=>l.trim().length>2);
+    const garbageCount=lines.filter(l=>{const nl=(l.match(/[^\x00-\x7F\u00C0-\u024F\u20AC€.,\d\s\-\/()]/g)||[]).length;return nl>l.length*0.25;}).length;
+    result._hasMirrorNoise=garbageCount>=2;
+    if(window._lastTicketB64) await ImgDB.save(result.id,'data:image/jpeg;base64,'+window._lastTicketB64);
+    hideOCRLoading();
+    openTicketEditor(result);
+    showToast(result._hasMirrorNoise?'Mejorado, pero aún hay ruido':'Ticket mejorado',2500);
+  }catch(err){hideOCRLoading();showToast('Error: '+err.message,4000);}
+}
 function closeTicketEditor(){document.getElementById('ticket-editor').style.display='none';currentTicket=null;window._lastTicketB64=null;_releerMode=false;}
 function deleteCurrentTicket(){if(!currentTicket)return;window._deleteTicketId=currentTicket.id;const t=currentTicket;openModal(`<div class="modal-title">Eliminar ticket</div><p class="modal-body-text">¿Eliminar el ticket de ${t.store||'este supermercado'}?</p><div class="modal-actions"><button class="btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn-danger" onclick="confirmDeleteTicket()">Eliminar</button></div>`);}
 function confirmDeleteTicket(){const id=window._deleteTicketId;if(!id){closeModal();return;}const t=DB.tickets.find(tk=>tk.id===id);if(t){DB.tickets=DB.tickets.filter(tk=>tk.id!==id);saveDB();}ImgDB.delete(id);CloudImg.delete(id);window._deleteTicketId=null;closeModal();closeTicketEditor();showToast('Ticket eliminado');showScreen(currentScreen==='tickets'?'tickets':'home');}
@@ -990,14 +1079,18 @@ function renderStats(){
   applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
+let _despensaShowAll=false;
+function toggleDespensaAll(){_despensaShowAll=!_despensaShowAll;renderStats();}
 function renderInventorySection(){
   const preds=getPredictions();
   const archived=DB.knowledge?.archivedDespensa||[];
   const bought=new Set(DB.knowledge?.boughtDespensa||[]);
 
+  const limit=_despensaShowAll?preds.length:12;
+  const shown=preds.slice(0,limit);
   const activeSection=preds.length===0
     ?`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`
-    :buildInventoryRows(preds.slice(0,50), bought);
+    :buildInventoryRows(shown, bought)+(preds.length>12?`<button class="btn-ghost despensa-toggle" onclick="toggleDespensaAll()">${_despensaShowAll?'Ver menos':'Ver toda la despensa ('+preds.length+')'}</button>`:'');
 
   // Sección de archivados
   let archivedSection='';
