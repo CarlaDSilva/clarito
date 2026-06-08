@@ -735,7 +735,7 @@ function renderTicketListItem(t){
   </div>`;
 }
 
-function renderPredictionsWidget(){const preds=getPredictions().slice(0,2);if(!preds.length)return'';return`<div class="recent-label">Previsiones</div>${preds.map(p=>`<div class="pred-card"><div class="pred-info"><div class="pred-name">${p.name}</div><div class="pred-detail">${p.detail}</div></div><div class="pred-days">~${p.days}d</div></div>`).join('')}`;}
+function renderPredictionsWidget(){const preds=getPredictions().filter(p=>p.days<=7).slice(0,2);if(!preds.length)return'';return`<div class="recent-label">Previsiones</div>${preds.map(p=>`<div class="pred-card"><div class="pred-info"><div class="pred-name">${p.name}</div><div class="pred-detail">${p.detail}</div></div><div class="pred-days">~${p.days}d</div></div>`).join('')}`;}
 
 function calcBalance(){
   const paid={},owedTo={};DB.persons.forEach(p=>{paid[p.id]=0;owedTo[p.id]=0;});
@@ -1086,11 +1086,15 @@ function renderInventorySection(){
   const archived=DB.knowledge?.archivedDespensa||[];
   const bought=new Set(DB.knowledge?.boughtDespensa||[]);
 
-  const limit=_despensaShowAll?preds.length:12;
-  const shown=preds.slice(0,limit);
+  // Lista activa: solo productos que se agotan en 7 días o menos
+  const urgent=preds.filter(p=>p.days<=7);
+  const shown=_despensaShowAll?preds:urgent;
   const activeSection=preds.length===0
     ?`<div class="empty-state"><p>Añade más tickets para estimar la despensa</p></div>`
-    :buildInventoryRows(shown, bought)+(preds.length>12?`<button class="btn-ghost despensa-toggle" onclick="toggleDespensaAll()">${_despensaShowAll?'Ver menos':'Ver toda la despensa ('+preds.length+')'}</button>`:'');
+    :(shown.length===0&&!_despensaShowAll
+        ?`<div class="empty-state"><p>Nada a punto de agotarse</p></div>`
+        :buildInventoryRows(shown, bought))
+      +`<button class="btn-ghost despensa-toggle" onclick="toggleDespensaAll()">${_despensaShowAll?'Ver solo lo urgente':'Ver toda la despensa ('+preds.length+')'}</button>`;
 
   // Sección de archivados
   let archivedSection='';
@@ -1164,11 +1168,12 @@ function sendDespensaToReminders(){
   preds.forEach(p=>{
     const key=normalizeKey(p.name);
     if(bought.has(key)) return;
+    if(p.days>7) return; // solo los que se agotan en 7 días o menos
     const s=p.store||'Sin supermercado';
     if(!byStore[s]) byStore[s]=[];
     byStore[s].push(p.name);
   });
-  if(Object.keys(byStore).length===0){showToast('No hay productos pendientes');return;}
+  if(Object.keys(byStore).length===0){showToast('No hay productos a punto de agotarse');return;}
   // Enviar JSON a Scriptable: [{store, name}, ...]
   const items=[];
   Object.entries(byStore).forEach(([store,prods])=>{
