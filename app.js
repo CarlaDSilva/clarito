@@ -1098,8 +1098,28 @@ function renderInventorySection(){
       activeSection+=`<div class="inv-subsection-label">A punto de agotarse</div><div class="empty-state"><p>Nada a punto de agotarse</p></div>`;
     }
     if(rest.length>0){
-      activeSection+=`<div class="inv-subsection-label" style="margin-top:18px">Resto de la despensa (${rest.length})</div>`+buildInventoryRows(rest, bought);
+      activeSection+=`<div class="inv-subsection-label" style="margin-top:18px" id="inv-rest-label" oncontextmenu="event.preventDefault();document.getElementById('inv-singles-details')?.setAttribute('open','');document.getElementById('inv-singles-details')?.scrollIntoView({behavior:'smooth'})">Resto de la despensa (${rest.length})</div>`+buildInventoryRows(rest, bought);
     }
+  }
+
+  // Sección de comprados una sola vez (oculta por defecto)
+  const singles=getSinglePurchases();
+  const storeKeys=Object.keys(singles).sort();
+  let singlesSection='';
+  if(storeKeys.length>0){
+    const rows=storeKeys.map(s=>`
+      <div class="inv-store-group">
+        <div class="inv-store-group-label">${s}</div>
+        ${singles[s].map(name=>`<div class="inv-single-row">${name}</div>`).join('')}
+      </div>`).join('');
+    singlesSection=`
+      <details class="inv-singles-details" id="inv-singles-details">
+        <summary class="inv-archived-summary" id="inv-singles-summary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+          Comprados una vez (${storeKeys.reduce((s,k)=>s+singles[k].length,0)})
+        </summary>
+        <div class="inv-singles-body">${rows}</div>
+      </details>`;
   }
 
   // Sección de archivados
@@ -1133,9 +1153,17 @@ function renderInventorySection(){
     document.querySelectorAll('.inv-restore-btn').forEach(btn=>{
       btn.onclick=()=>restoreDespensa(btn.dataset.key);
     });
+    // Long press en "Resto de la despensa" abre el menú oculto
+    const lbl=document.getElementById('inv-rest-label');
+    if(lbl){
+      let lt=null;
+      lbl.addEventListener('touchstart',()=>{lt=setTimeout(()=>{const d=document.getElementById('inv-singles-details');if(d){d.setAttribute('open','');d.scrollIntoView({behavior:'smooth'});}},600);},{passive:true});
+      lbl.addEventListener('touchend',()=>clearTimeout(lt),{passive:true});
+      lbl.addEventListener('touchmove',()=>clearTimeout(lt),{passive:true});
+    }
   },0);
 
-  return activeSection+archivedSection;
+  return activeSection+singlesSection+archivedSection;
 }
 
 function buildInventoryRows(preds, bought){
@@ -1193,6 +1221,32 @@ function sendDespensaToReminders(){
   setTimeout(()=>a.remove(),500);
   showToast('Abriendo Scriptable…',2000);
 }
+function getSinglePurchases(){
+  // Productos comprados exactamente una vez, agrupados por supermercado
+  const cT=DB.tickets.filter(t=>t.confirmed&&t.date);
+  const archived=new Set(DB.knowledge?.archivedDespensa||[]);
+  const ph={};
+  cT.forEach(t=>{
+    (t.products||[]).forEach(p=>{
+      const k=normalizeKey(p.name||'');
+      if(!k||archived.has(k)) return;
+      if(!ph[k])ph[k]={name:p.name,count:0,store:t.store||''};
+      ph[k].count++;
+      if(t.store&&!ph[k].store)ph[k].store=t.store;
+    });
+  });
+  // Solo los comprados exactamente 1 vez
+  const singles=Object.values(ph).filter(v=>v.count===1);
+  // Agrupar por supermercado
+  const byStore={};
+  singles.forEach(p=>{
+    const s=p.store||'Sin supermercado';
+    if(!byStore[s])byStore[s]=[];
+    byStore[s].push(p.name);
+  });
+  return byStore;
+}
+
 function toggleBoughtDespensa(key,checked){
   if(!DB.knowledge) DB.knowledge={products:{},cards:{}};
   if(!DB.knowledge.boughtDespensa) DB.knowledge.boughtDespensa=[];
