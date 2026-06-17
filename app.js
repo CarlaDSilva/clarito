@@ -1054,10 +1054,15 @@ function renderStats(){
     ${anomalies.length?`<div class="anomalies-list">${anomalies.map(a=>`<div class="anomaly-chip">${a}</div>`).join('')}</div>`:''}
     <div class="inv-section-header">
       <span class="recent-label" style="padding:0">Despensa estimada</span>
-      <button class="inv-reminders-btn" onclick="sendDespensaToReminders()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-        Recordatorios
-      </button>
+      <div style="display:flex;gap:8px">
+        <button class="inv-add-btn" onclick="openAddDespensa()" title="Añadir producto">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <button class="inv-reminders-btn" onclick="sendDespensaToReminders()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          Recordatorios
+        </button>
+      </div>
     </div>
     ${renderInventorySection()}
     ${storeSorted.length?`<div class="recent-label">Por supermercado</div><div class="bar-chart">${storeSorted.map(([s,a],i)=>{const cols=['var(--accent)','var(--green)','var(--blue)','var(--amber)','var(--red)'];return`<div class="bar-row"><div class="bar-name">${s}</div><div class="bar-track"><div class="bar-fill" style="width:${Math.round(a/storeSorted[0][1]*100)}%;background:${cols[i]}"></div></div><div class="bar-amt">${fmt(a)}</div></div>`;}).join('')}</div>`:''}
@@ -1079,6 +1084,37 @@ function renderStats(){
   applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
+function openAddDespensa(){
+  if(GistSync.isReadOnly())return;
+  const singles=getSinglePurchases();
+  const allSingleNames=[];
+  Object.entries(singles).forEach(([store,names])=>names.forEach(n=>allSingleNames.push({name:n,store})));
+  const suggestHtml=allSingleNames.length?`
+    <div class="field-label" style="margin-top:14px">O elige de lo comprado una vez</div>
+    <div class="add-despensa-suggestions">
+      ${allSingleNames.map(s=>`<button class="add-despensa-chip" onclick="document.getElementById('add-despensa-name').value='${s.name.replace(/'/g,"\\'")}';document.getElementById('add-despensa-store').value='${(s.store||'').replace(/'/g,"\\'")}'">${s.name}</button>`).join('')}
+    </div>`:'';
+  openModal(`
+    <div class="modal-title">Añadir a la despensa</div>
+    <div class="field-row"><label class="field-label">Nombre del producto</label><input id="add-despensa-name" placeholder="Ej: Mozzarella rallada"/></div>
+    <div class="field-row"><label class="field-label">Supermercado <span class="label-hint">(opcional)</span></label><input id="add-despensa-store" placeholder="Ej: Carrefour"/></div>
+    <div class="field-row"><label class="field-label">Días hasta agotarse</label><input id="add-despensa-days" type="number" value="3" min="0" max="90"/></div>
+    ${suggestHtml}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+      <button class="btn-primary" onclick="confirmAddDespensa()">Añadir</button>
+    </div>`);
+}
+function confirmAddDespensa(){
+  const name=document.getElementById('add-despensa-name').value.trim();
+  const store=document.getElementById('add-despensa-store').value.trim();
+  const days=parseInt(document.getElementById('add-despensa-days').value)||3;
+  if(!name){showToast('Escribe un nombre');return;}
+  addManualDespensa(name,store,days);
+  closeModal();
+  showToast('Añadido a la despensa');
+  renderStats();
+}
 function renderInventorySection(){
   const preds=getPredictions();
   const archived=DB.knowledge?.archivedDespensa||[];
@@ -1228,9 +1264,13 @@ function getSinglePurchases(){
   const ph={};
   cT.forEach(t=>{
     (t.products||[]).forEach(p=>{
-      const k=normalizeKey(p.name||'');
+      const rawKey=normalizeKey(p.name||'');
+      if(!rawKey)return;
+      const known=DB.knowledge.products[rawKey];
+      const displayName=known?.alias||p.name;
+      const k=normalizeKey(displayName);
       if(!k||archived.has(k)) return;
-      if(!ph[k])ph[k]={name:p.name,count:0,store:t.store||''};
+      if(!ph[k])ph[k]={name:displayName,count:0,store:t.store||''};
       ph[k].count++;
       if(t.store&&!ph[k].store)ph[k].store=t.store;
     });
@@ -1296,9 +1336,23 @@ function getPredictions(){
       .sort((a,b)=>a.days-b.days);
   }
   const ph={};
-  cT.forEach(t=>{const d=new Date(t.date).getTime();(t.products||[]).forEach(p=>{const k=normalizeKey(p.name||'');if(!k||archived.has(k)||bought.has(k))return;if(!ph[k])ph[k]={name:p.name,dates:[],store:t.store||''};ph[k].dates.push(d);if(t.store&&!ph[k].store)ph[k].store=t.store;});});
+  cT.forEach(t=>{
+    const d=new Date(t.date).getTime();
+    (t.products||[]).forEach(p=>{
+      const rawKey=normalizeKey(p.name||'');
+      if(!rawKey)return;
+      // Resolver el nombre actual (alias) por si el ticket es viejo y el producto fue renombrado luego
+      const known=DB.knowledge.products[rawKey];
+      const displayName=known?.alias||p.name;
+      const k=normalizeKey(displayName);
+      if(!k||archived.has(k)||bought.has(k))return;
+      if(!ph[k])ph[k]={name:displayName,dates:[],store:t.store||''};
+      ph[k].dates.push(d);
+      if(t.store&&!ph[k].store)ph[k].store=t.store;
+    });
+  });
   const now=Date.now();
-  return Object.values(ph)
+  const autoItems=Object.values(ph)
     .filter(v=>v.dates.length>=2)
     .map(item=>{
       item.dates.sort((a,b)=>a-b);
@@ -1308,10 +1362,32 @@ function getPredictions(){
       const avgFreq=Math.max(7,gaps.reduce((s,g)=>s+g,0)/gaps.length);
       const daysSince=(now-uniq[uniq.length-1])/864e5;
       const daysLeft=Math.max(0,Math.round(avgFreq-daysSince));
-      return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),store:item.store||'',detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d'};
+      return{name:item.name,days:daysLeft,freq:Math.round(avgFreq),store:item.store||'',detail:'Cada ~'+Math.round(avgFreq)+'d · hace '+Math.round(daysSince)+'d',manual:false};
     })
-    .filter(Boolean)
-    .sort((a,b)=>a.days-b.days);
+    .filter(Boolean);
+  // Productos añadidos manualmente a la despensa
+  const manualList=(DB.knowledge.manualDespensa||[]).filter(m=>{
+    const k=normalizeKey(m.name);
+    return !archived.has(k)&&!bought.has(k);
+  });
+  const autoKeys=new Set(autoItems.map(i=>normalizeKey(i.name)));
+  const manualItems=manualList
+    .filter(m=>!autoKeys.has(normalizeKey(m.name))) // si ya hay estimación automática, esa prevalece
+    .map(m=>({name:m.name,days:m.days??3,freq:m.days??3,store:m.store||'',detail:'Añadido manualmente',manual:true}));
+  return autoItems.concat(manualItems).sort((a,b)=>a.days-b.days);
+}
+
+function addManualDespensa(name,store,days){
+  if(!DB.knowledge.manualDespensa) DB.knowledge.manualDespensa=[];
+  const k=normalizeKey(name);
+  // Si ya existe, actualizar en vez de duplicar
+  const existing=DB.knowledge.manualDespensa.find(m=>normalizeKey(m.name)===k);
+  if(existing){existing.store=store||existing.store;existing.days=days??3;}
+  else DB.knowledge.manualDespensa.push({name,store:store||'',days:days??3,addedAt:new Date().toISOString()});
+  // Si estaba comprado o archivado, quitarlo de esas listas para que vuelva a aparecer
+  if(DB.knowledge.boughtDespensa)DB.knowledge.boughtDespensa=DB.knowledge.boughtDespensa.filter(x=>x!==k);
+  if(DB.knowledge.archivedDespensa)DB.knowledge.archivedDespensa=DB.knowledge.archivedDespensa.filter(x=>x!==k);
+  saveDB();
 }
 
 // ── SETTINGS ──────────────────────────────────────────────────
