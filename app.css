@@ -502,3 +502,9 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent)}
 .add-despensa-suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .add-despensa-chip{background:var(--bg3);border:1px solid var(--brd);border-radius:20px;padding:6px 14px;font-size:13px;color:var(--txt1);cursor:pointer}
 .add-despensa-chip:active{background:var(--bg4)}
+.add-despensa-singles-details{margin-top:14px}
+.add-despensa-autocomplete{position:absolute;top:100%;left:0;right:0;background:var(--bg3);border:1px solid var(--brd);border-radius:10px;margin-top:4px;max-height:200px;overflow-y:auto;z-index:20;box-shadow:0 8px 24px rgba(0,0,0,.4)}
+.ac-item{padding:10px 14px;font-size:14px;color:var(--txt1);display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer}
+.ac-item:last-child{border-bottom:none}
+.ac-item:active{background:var(--bg4)}
+.ac-store{font-size:11px;color:var(--txt3)}

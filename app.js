@@ -1084,33 +1084,77 @@ function renderStats(){
   applyReadOnlyUI();
 }
 function detectAnomalies(){const now=new Date(),msgs=[];const thisT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===now.getMonth());const lastT=DB.tickets.filter(t=>t.confirmed&&t.date&&new Date(t.date).getMonth()===(now.getMonth()-1+12)%12);const tT=thisT.reduce((s,t)=>s+parseFloat(t.total||0),0);const lT=lastT.reduce((s,t)=>s+parseFloat(t.total||0),0);if(lT>0&&tT>lT*1.3)msgs.push('Este mes gastáis un '+Math.round((tT/lT-1)*100)+'% más que el mes pasado.');return msgs;}
+function getKnownAliasesWithStore(){
+  // Construye lista de alias únicos (motes) con el supermercado más reciente conocido
+  const cT=DB.tickets.filter(t=>t.confirmed&&t.date).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const byAlias={};
+  cT.forEach(t=>{
+    (t.products||[]).forEach(p=>{
+      const rawKey=normalizeKey(p.name||'');
+      if(!rawKey)return;
+      const known=DB.knowledge.products[rawKey];
+      const displayName=known?.alias||p.name;
+      const k=normalizeKey(displayName);
+      if(!k)return;
+      if(!byAlias[k]) byAlias[k]={name:displayName,store:t.store||''};
+    });
+  });
+  return Object.values(byAlias).sort((a,b)=>a.name.localeCompare(b.name,'es'));
+}
+
 function openAddDespensa(){
   if(GistSync.isReadOnly())return;
   const singles=getSinglePurchases();
   const allSingleNames=[];
   Object.entries(singles).forEach(([store,names])=>names.forEach(n=>allSingleNames.push({name:n,store})));
-  const suggestHtml=allSingleNames.length?`
-    <div class="field-label" style="margin-top:14px">O elige de lo comprado una vez</div>
-    <div class="add-despensa-suggestions">
-      ${allSingleNames.map(s=>`<button class="add-despensa-chip" onclick="document.getElementById('add-despensa-name').value='${s.name.replace(/'/g,"\\'")}';document.getElementById('add-despensa-store').value='${(s.store||'').replace(/'/g,"\\'")}'">${s.name}</button>`).join('')}
-    </div>`:'';
+  const singlesHtml=allSingleNames.length?`
+    <details class="add-despensa-singles-details">
+      <summary class="inv-archived-summary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        Elegir de lo comprado una vez (${allSingleNames.length})
+      </summary>
+      <div class="add-despensa-suggestions">
+        ${allSingleNames.map(s=>`<button class="add-despensa-chip" onclick="pickDespensaSuggestion('${s.name.replace(/'/g,"\\'")}','${(s.store||'').replace(/'/g,"\\'")}')">${s.name}</button>`).join('')}
+      </div>
+    </details>`:'';
   openModal(`
     <div class="modal-title">Añadir a la despensa</div>
-    <div class="field-row"><label class="field-label">Nombre del producto</label><input id="add-despensa-name" placeholder="Ej: Mozzarella rallada"/></div>
+    <div class="field-row" style="position:relative">
+      <label class="field-label">Nombre del producto</label>
+      <input id="add-despensa-name" placeholder="Ej: Musarelita" autocomplete="off" oninput="updateDespensaAutocomplete(this.value)"/>
+      <div id="add-despensa-autocomplete" class="add-despensa-autocomplete" style="display:none"></div>
+    </div>
     <div class="field-row"><label class="field-label">Supermercado <span class="label-hint">(opcional)</span></label><input id="add-despensa-store" placeholder="Ej: Carrefour"/></div>
     <div class="field-row"><label class="field-label">Días hasta agotarse</label><input id="add-despensa-days" type="number" value="3" min="0" max="90"/></div>
-    ${suggestHtml}
+    ${singlesHtml}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
       <button class="btn-primary" onclick="confirmAddDespensa()">Añadir</button>
     </div>`);
 }
+function updateDespensaAutocomplete(val){
+  const box=document.getElementById('add-despensa-autocomplete');
+  if(!box)return;
+  const q=val.trim().toLowerCase();
+  if(q.length<3){box.style.display='none';box.innerHTML='';return;}
+  const known=getKnownAliasesWithStore();
+  const matches=known.filter(k=>k.name.toLowerCase().includes(q)).slice(0,8);
+  if(!matches.length){box.style.display='none';box.innerHTML='';return;}
+  box.innerHTML=matches.map(m=>`<div class="ac-item" onclick="pickDespensaSuggestion('${m.name.replace(/'/g,"\\'")}','${(m.store||'').replace(/'/g,"\\'")}')">${m.name}${m.store?`<span class="ac-store">${m.store}</span>`:''}</div>`).join('');
+  box.style.display='block';
+}
+function pickDespensaSuggestion(name,store){
+  document.getElementById('add-despensa-name').value=name;
+  document.getElementById('add-despensa-store').value=store||'';
+  const box=document.getElementById('add-despensa-autocomplete');
+  if(box){box.style.display='none';box.innerHTML='';}
+}
 function confirmAddDespensa(){
   const name=document.getElementById('add-despensa-name').value.trim();
   const store=document.getElementById('add-despensa-store').value.trim();
-  const days=parseInt(document.getElementById('add-despensa-days').value)||3;
+  const days=parseInt(document.getElementById('add-despensa-days').value);
   if(!name){showToast('Escribe un nombre');return;}
-  addManualDespensa(name,store,days);
+  addManualDespensa(name,store,isNaN(days)?3:days);
   closeModal();
   showToast('Añadido a la despensa');
   renderStats();
@@ -1373,7 +1417,13 @@ function getPredictions(){
   const autoKeys=new Set(autoItems.map(i=>normalizeKey(i.name)));
   const manualItems=manualList
     .filter(m=>!autoKeys.has(normalizeKey(m.name))) // si ya hay estimación automática, esa prevalece
-    .map(m=>({name:m.name,days:m.days??3,freq:m.days??3,store:m.store||'',detail:'Añadido manualmente',manual:true}));
+    .map(m=>{
+      const days=m.days??3;
+      // Frecuencia de referencia fija para que la barra refleje urgencia real
+      // (no usamos days===freq, si no la barra siempre saldría al 100%)
+      const freq=Math.max(days,14);
+      return{name:m.name,days,freq,store:m.store||'',detail:'Añadido manualmente',manual:true};
+    });
   return autoItems.concat(manualItems).sort((a,b)=>a.days-b.days);
 }
 
