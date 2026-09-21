@@ -51,7 +51,7 @@ function hideSplash(){const s=document.getElementById('splash');s.classList.add(
 let currentScreen='home';
 function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;if(name==='stats')_statsMonthOffset=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
-let setupStep=-1,setupPersonCount=2,_statsMonthOffset=0,_statsMode='month';const APP_VERSION='v4.3.1 · Lavanda';
+let setupStep=-1,setupPersonCount=2,_statsMonthOffset=0,_statsMode='month';const APP_VERSION='v4.4.0 · Lavanda';
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
 function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=-1;renderSetupStep();}
 function renderSetupStep(){
@@ -674,10 +674,10 @@ function guessCategory(name){const n=name.toLowerCase();if(/leche|yogur|queso|ma
 
 // ── GROQ ──────────────────────────────────────────────────────
 // Modelos con fallback. Si Groq deprecca uno, se prueba el siguiente automáticamente.
-// TEXTO: repuestos estables. VISIÓN: qwen3.6-27b es PREVIEW (Groq puede retirarlo con
+// TEXTO: repuestos estables. VISIÓN: qwen3.8-27b es PREVIEW (Groq puede retirarlo con
 // poco aviso); si eso ocurre, cambia SOLO la línea GROQ_VISION_MODEL de abajo.
 const GROQ_TEXT_MODELS=['openai/gpt-oss-120b','openai/gpt-oss-20b'];
-const GROQ_VISION_MODEL='qwen/qwen3.6-27b'; // ← EDITA AQUÍ si el preview desaparece
+const GROQ_VISION_MODEL='qwen/qwen3.8-27b'; // ← EDITA AQUÍ si el preview desaparece (Groq retira modelos preview sin aviso; comprueba console.groq.com/docs/models)
 const GROQ_VISION_MODELS=[GROQ_VISION_MODEL];
 // Intenta cada modelo en orden; salta al siguiente si el modelo no existe o fue retirado.
 async function groqFetchFallback(key,models,buildBody){
@@ -701,6 +701,14 @@ function parseGroqJSON(data){
   try{return JSON.parse(text);}catch(_){const m=text.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('Groq no devolvió JSON legible');}
 }
 
+async function groqVisionExtract(b64){
+  const key=DB.groqKey;if(!key)throw new Error('Sin Groq Key');
+  const d=await groqFetchFallback(key,GROQ_VISION_MODELS,model=>({model,max_tokens:1500,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:'Eres un lector de tickets de supermercado. Extrae TODOS los productos con sus cantidades y precios unitarios. Responde SOLO con JSON sin markdown: {"store":"nombre","date":"YYYY-MM-DD o null","total":0.00,"products":[{"name":"NOMBRE","qty":1,"unitPrice":0.00}]}'}]}]}));
+  if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(d.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));
+  const parsed=parseGroqJSON(d);
+  const products=(parsed.products||[]).map(p=>({name:normalizeProdName(p.name||''),rawName:p.name||'',qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0,price:parseFloat(p.unitPrice)||0,finalPrice:parseFloat(((parseFloat(p.unitPrice)||0)*(parseInt(p.qty)||1)).toFixed(2)),confidence:0.9,category:'otro'}));
+  return {store:parsed.store||'',date:parsed.date||null,time:null,total:parsed.total||0,last4:null,products,errors:[],warnings:[]};
+}
 async function groqParseText(ocrText){const key=DB.groqKey;if(!key)throw new Error('Sin API key Groq');const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:\n{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}\nIgnora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.\nTexto:\n${ocrText}\n${knownProds?' Conocidos: '+knownProds:''}`;const data=await groqFetchFallback(key,GROQ_TEXT_MODELS,model=>({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:2048}));return parseGroqJSON(data);}
 
 // ── PROCESS FILE ──────────────────────────────────────────────
@@ -721,7 +729,14 @@ async function processFile(file){
       window._lastFile=file;
       result._hasMirrorNoise=garbageCount>=2;
     }
-    else{hideOCRLoading();showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);openTicketEditor(getEmptyTicket());return;}
+    else{
+      // Fallback: si Google Vision no devolvió texto, leer la imagen con la visión de Groq
+      if(DB.groqKey){
+        try{setOCRStatus('Leyendo con IA (Groq)...');result=await groqVisionExtract(b64);window._lastTicketB64=b64;window._lastFile=file;result._hasMirrorNoise=false;console.log('Groq visión:',(result.products||[]).length,'productos');}
+        catch(gErr){console.warn('Groq visión falló:',gErr.message);}
+      }
+      if(!result||!(result.products||[]).length){hideOCRLoading();showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);openTicketEditor(getEmptyTicket());return;}
+    }
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
     if(result.last4&&DB.knowledge.cards[result.last4])result.payer=DB.knowledge.cards[result.last4];
