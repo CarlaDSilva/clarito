@@ -51,7 +51,7 @@ function hideSplash(){const s=document.getElementById('splash');s.classList.add(
 let currentScreen='home';
 function showScreen(name){currentScreen=name;document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));document.getElementById('nav-'+name)?.classList.add('active');document.getElementById('view').scrollTop=0;if(name==='stats')_statsMonthOffset=0;({home:renderHome,tickets:renderTickets,balance:renderBalance,stats:renderStats,settings:renderSettings})[name]?.();updateAIBadge();}
 
-let setupStep=-1,setupPersonCount=2,_statsMonthOffset=0,_statsMode='month';const APP_VERSION='v4.4.0 · Lavanda';
+let setupStep=-1,setupPersonCount=2,_statsMonthOffset=0,_statsMode='month';const APP_VERSION='v4.5.0 · Lavanda';
 // setupStep: -1=bienvenida, 0=API keys, 1=personas, 2=nombres/colores, 3=listo
 function startSetup(){document.getElementById('setup-screen').style.display='flex';setupStep=-1;renderSetupStep();}
 function renderSetupStep(){
@@ -683,11 +683,18 @@ const GROQ_VISION_MODELS=[GROQ_VISION_MODEL];
 async function groqFetchFallback(key,models,buildBody){
   let lastErr=null;
   for(const model of models){
-    let res;
-    try{res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(buildBody(model))});}
+    let res,body=buildBody(model);
+    try{res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});}
     catch(e){lastErr=new Error('Red bloqueada: '+e.message);continue;}
-    const raw=await res.text().catch(()=>'');
+    let raw=await res.text().catch(()=>'');
     let json=null;try{json=JSON.parse(raw);}catch(_){}
+    // Si el modelo no acepta los parámetros de razonamiento, reintentar sin ellos
+    if(!res.ok&&res.status===400&&('reasoning_effort' in body||'reasoning_format' in body)&&/reasoning/i.test(json?.error?.message||raw)){
+      delete body.reasoning_effort;delete body.reasoning_format;
+      try{res=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify(body)});}
+      catch(e){lastErr=new Error('Red bloqueada: '+e.message);continue;}
+      raw=await res.text().catch(()=>'');json=null;try{json=JSON.parse(raw);}catch(_){}
+    }
     if(res.ok){if(json)return json;lastErr=new Error('Respuesta no-JSON (HTTP '+res.status+') de '+model+': '+raw.slice(0,80));continue;}
     const msg=json?.error?.message||('Groq HTTP '+res.status+': '+raw.slice(0,80));
     if(res.status===404||res.status===400||/decommission|deprecat|not found|does not exist|no longer|unavailable/i.test(msg)){lastErr=new Error(msg);continue;}
@@ -695,21 +702,37 @@ async function groqFetchFallback(key,models,buildBody){
   }
   throw lastErr||new Error('Groq: ningún modelo disponible');
 }
-async function callGroq(prompt){const key=DB.groqKey;if(!key)throw new Error('No hay API key de Groq. Ve a Configuración.');const data=await groqFetchFallback(key,GROQ_TEXT_MODELS,model=>({model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:1024}));if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(data.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));return data.choices?.[0]?.message?.content||'';}
+async function callGroq(prompt){const key=DB.groqKey;if(!key)throw new Error('No hay API key de Groq. Ve a Configuración.');const data=await groqFetchFallback(key,GROQ_TEXT_MODELS,model=>({model,messages:[{role:'user',content:prompt}],temperature:0.2,max_tokens:2048,reasoning_effort:'low'}));if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(data.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));return data.choices?.[0]?.message?.content||'';}
 function parseGroqJSON(data){
   const text=(data?.choices?.[0]?.message?.content||'').replace(/```json/gi,'').replace(/```/g,'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim();
   try{return JSON.parse(text);}catch(_){const m=text.match(/\{[\s\S]*\}/);if(m)return JSON.parse(m[0]);throw new Error('Groq no devolvió JSON legible');}
 }
 
-async function groqVisionExtract(b64){
-  const key=DB.groqKey;if(!key)throw new Error('Sin Groq Key');
-  const d=await groqFetchFallback(key,GROQ_VISION_MODELS,model=>({model,max_tokens:1500,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+b64}},{type:'text',text:'Eres un lector de tickets de supermercado. Extrae TODOS los productos con sus cantidades y precios unitarios. Responde SOLO con JSON sin markdown: {"store":"nombre","date":"YYYY-MM-DD o null","total":0.00,"products":[{"name":"NOMBRE","qty":1,"unitPrice":0.00}]}'}]}]}));
-  if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(d.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));
-  const parsed=parseGroqJSON(d);
-  const products=(parsed.products||[]).map(p=>({name:normalizeProdName(p.name||''),rawName:p.name||'',qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0,price:parseFloat(p.unitPrice)||0,finalPrice:parseFloat(((parseFloat(p.unitPrice)||0)*(parseInt(p.qty)||1)).toFixed(2)),confidence:0.9,category:'otro'}));
-  return {store:parsed.store||'',date:parsed.date||null,time:null,total:parsed.total||0,last4:null,products,errors:[],warnings:[]};
+function groqCountUsage(d){if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(d?.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));}
+function groqNum(v){if(typeof v==='number')return v;return parseFloat(String(v||'').replace(',','.'))||0;}
+// Convierte productos devueltos por Groq al mismo formato que el parser local
+function groqToProducts(list){
+  return (list||[]).filter(p=>p&&(p.name||p.rawName)).map(p=>{
+    const raw=(p.rawName||p.name||'').toString().trim();
+    const nm=(p.name||raw).toString().trim();
+    const qty=Math.max(1,parseInt(p.qty)||1);
+    let unit=groqNum(p.unitPrice);
+    if(!unit&&p.price)unit=qty>1?parseFloat((groqNum(p.price)/qty).toFixed(2)):groqNum(p.price);
+    return makeProduct(nm,raw,unit,qty);
+  }).filter(p=>p.name&&p.name.length>=2);
 }
-async function groqParseText(ocrText){const key=DB.groqKey;if(!key)throw new Error('Sin API key Groq');const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:\n{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}\nIgnora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.\nTexto:\n${ocrText}\n${knownProds?' Conocidos: '+knownProds:''}`;const data=await groqFetchFallback(key,GROQ_TEXT_MODELS,model=>({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:2048}));return parseGroqJSON(data);}
+// Lee un ticket desde imagen con la visión de Groq. img = base64 (sin cabecera) o URL https
+async function groqVisionExtract(img,extraPrompt){
+  const key=DB.groqKey;if(!key)throw new Error('Sin Groq Key');
+  const url=/^https?:\/\//.test(img)?img:'data:image/jpeg;base64,'+img;
+  const prompt='Eres un lector de tickets de supermercado españoles. Extrae TODOS los productos comprados con su cantidad y precio unitario. Ignora IVA, subtotales, total, pagos, cambio, descuentos con %, y datos de la tienda. rawName = texto literal tal como aparece en el ticket.'+(extraPrompt||'')+'\n\nResponde SOLO con JSON sin markdown: {"store":"nombre","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0.00,"products":[{"rawName":"TEXTO TICKET","name":"nombre legible","qty":1,"unitPrice":0.00}]}';
+  const d=await groqFetchFallback(key,GROQ_VISION_MODELS,model=>({model,temperature:0.1,max_tokens:4096,reasoning_effort:'none',messages:[{role:'user',content:[{type:'image_url',image_url:{url}},{type:'text',text:prompt}]}]}));
+  groqCountUsage(d);
+  const parsed=parseGroqJSON(d);
+  const _d=/^\d{4}-\d{2}-\d{2}$/.test(parsed.date||'')?parsed.date:new Date().toISOString().slice(0,10);const _t=/^\d{1,2}:\d{2}$/.test(parsed.time||'')?parsed.time:null;
+  return {store:(parsed.store&&parsed.store!=='nombre')?parsed.store:'',date:_d,time:_t,total:groqNum(parsed.total),last4:null,products:groqToProducts(parsed.products),errors:[],warnings:[]};
+}
+async function groqParseText(ocrText){const key=DB.groqKey;if(!key)throw new Error('Sin API key Groq');const knownProds=Object.entries(DB.knowledge.products).slice(0,8).map(([k,v])=>`${k}→${v.shared?'común':personName(v.person)}`).join(', ');const prompt=`Analiza este texto de un ticket de supermercado español. Devuelve SOLO JSON sin markdown ni texto extra:\n{"store":"","date":"YYYY-MM-DD o null","time":"HH:MM o null","total":0,"last4":"4 dígitos o null","products":[{"rawName":"texto literal","name":"nombre legible","price":0,"unitPrice":0,"qty":1,"confidence":0.9,"category":"alimentación|higiene|limpieza|bebidas|lácteos|fruta|carne|pescado|congelados|otro"}],"errors":[],"warnings":[]}\nIgnora líneas de IVA, entrega efectivo, devolución, descuentos con %, total, subtotal.\nTexto:\n${ocrText}\n${knownProds?' Conocidos: '+knownProds:''}`;const data=await groqFetchFallback(key,GROQ_TEXT_MODELS,model=>({model,messages:[{role:'user',content:prompt}],temperature:0.1,max_tokens:4096,reasoning_effort:'low'}));groqCountUsage(data);const parsed=parseGroqJSON(data);const _d=/^\d{4}-\d{2}-\d{2}$/.test(parsed.date||'')?parsed.date:null;const _t=/^\d{1,2}:\d{2}$/.test(parsed.time||'')?parsed.time:null;const _l4=/^\d{4}$/.test(String(parsed.last4||''))?String(parsed.last4):null;return {store:parsed.store||'',date:_d,time:_t,total:groqNum(parsed.total),last4:_l4,products:groqToProducts(parsed.products),errors:[],warnings:[]};}
 
 // ── PROCESS FILE ──────────────────────────────────────────────
 async function processFile(file){
@@ -718,24 +741,43 @@ async function processFile(file){
     if(file.type==='application/pdf'){hideOCRLoading();showToast('Los PDFs no son compatibles. Usa el modo manual.',4000);openTicketEditor(getEmptyTicket());return;}
     setOCRStatus('Optimizando imagen...');
     const b64=await resizeForOCR(file,false);window._lastFile=file;
+    window._lastTicketB64=b64; // la imagen se conserva SIEMPRE (miniatura + botón Releer aunque falle la lectura)
     console.log('Imagen lista:',Math.round(b64.length*0.75/1024),'KB');
-    let ocrText='';
-    try{setOCRStatus('Leyendo ticket...');ocrText=await googleVisionExtract(b64);window._lastTicketB64=b64;if(!DB.visionStats)DB.visionStats={calls:0,firstCall:null};DB.visionStats.calls=(DB.visionStats.calls||0)+1;if(!DB.visionStats.firstCall)DB.visionStats.firstCall=new Date().toISOString().slice(0,10);S.set('visionStats',JSON.stringify(DB.visionStats));S.set('lastOCR',ocrText.slice(0,3000));}catch(ocrErr){console.warn('Google Vision falló:',ocrErr.message);setOCRStatus('Vision falló...');}
-    let result;
-    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',result.products.length,'productos');
+    let ocrText='',visionErr='',groqErr='';
+    if(DB.visionKey){
+      try{setOCRStatus('Leyendo ticket...');ocrText=await googleVisionExtract(b64);if(!DB.visionStats)DB.visionStats={calls:0,firstCall:null};DB.visionStats.calls=(DB.visionStats.calls||0)+1;if(!DB.visionStats.firstCall)DB.visionStats.firstCall=new Date().toISOString().slice(0,10);S.set('visionStats',JSON.stringify(DB.visionStats));S.set('lastOCR',ocrText.slice(0,3000));}
+      catch(ocrErr){visionErr=ocrErr.message;console.warn('Google Vision falló:',ocrErr.message);setOCRStatus('Vision falló: '+ocrErr.message.slice(0,60));}
+    }else visionErr='sin Google Vision Key';
+    let result=null;
+    // 1) Texto de Vision → parser local
+    if(ocrText){setOCRStatus('Interpretando ticket...');result=parseTicketText(ocrText);console.log('Parser local:',(result.products||[]).length,'productos');
       // Detectar texto invertido/espejo (ruido de fondo translúcido)
       const lines=ocrText.split('\n').filter(l=>l.trim().length>2);
-      const garbageCount=lines.filter(l=>{const nl=(l.match(/[^\x00-\x7F\u00C0-\u024F\u20AC€.,\d\s\-\/()]/g)||[]).length;return nl>l.length*0.25;}).length;
-      window._lastFile=file;
+      const garbageCount=lines.filter(l=>{const nl=(l.match(/[^\x00-\x7FÀ-ɏ€€.,\d\s\-\/()]/g)||[]).length;return nl>l.length*0.25;}).length;
       result._hasMirrorNoise=garbageCount>=2;
     }
-    else{
-      // Fallback: si Google Vision no devolvió texto, leer la imagen con la visión de Groq
-      if(DB.groqKey){
-        try{setOCRStatus('Leyendo con IA (Groq)...');result=await groqVisionExtract(b64);window._lastTicketB64=b64;window._lastFile=file;result._hasMirrorNoise=false;console.log('Groq visión:',(result.products||[]).length,'productos');}
-        catch(gErr){console.warn('Groq visión falló:',gErr.message);}
-      }
-      if(!result||!(result.products||[]).length){hideOCRLoading();showToast('No se pudo leer el ticket. Inténtalo manualmente.',4000);openTicketEditor(getEmptyTicket());return;}
+    // 2) Parser local sin productos → Groq interpreta el texto de Vision
+    if(ocrText&&!(result.products||[]).length&&DB.groqKey){
+      try{setOCRStatus('Interpretando con IA (Groq)...');const g=await groqParseText(ocrText);
+        if((g.products||[]).length){result.products=g.products;result.store=result.store||g.store;result.date=result.date||g.date;result.time=result.time||g.time;result.total=result.total||g.total;result.last4=result.last4||g.last4;}
+      }catch(e){groqErr=e.message;console.warn('Groq texto falló:',e.message);}
+    }
+    // 3) Sin texto o sin productos → Groq lee la imagen directamente
+    if((!result||!(result.products||[]).length)&&DB.groqKey){
+      try{setOCRStatus('Leyendo con IA (Groq)...');const g=await groqVisionExtract(b64);console.log('Groq visión:',(g.products||[]).length,'productos');
+        if((g.products||[]).length){
+          if(result){result.products=g.products;result.store=result.store||g.store;result.date=result.date||g.date;result.time=result.time||g.time;result.total=result.total||g.total;}
+          else{result=g;result._hasMirrorNoise=false;}
+        }
+      }catch(e){groqErr=e.message;console.warn('Groq visión falló:',e.message);}
+    }
+    if(!result||!(result.products||[]).length){
+      hideOCRLoading();
+      const why=[visionErr?'Vision: '+visionErr:'',groqErr?'Groq: '+groqErr:(DB.groqKey?'':'sin Groq Key')].filter(Boolean).join(' · ');
+      showToast('No se pudo leer el ticket'+(why?' ('+why.slice(0,120)+')':'')+'. Puedes usar Releer o rellenarlo a mano.',6000);
+      const empty=result?{...getEmptyTicket(),store:result.store||'',date:result.date||new Date().toISOString().slice(0,10),total:result.total||0,last4:result.last4||null}:getEmptyTicket();
+      await ImgDB.save(empty.id,'data:image/jpeg;base64,'+b64);
+      openTicketEditor(empty);return;
     }
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';result.id=uid();result.payer=DB.persons[0].id;result.confirmed=false;result.createdAt=new Date().toISOString();
@@ -879,7 +921,7 @@ function renderTicketEditor(){
     </div>
     <div class="te-footer">
       <button class="btn-secondary" onclick="closeTicketEditor()">Cancelar</button>
-      ${DB.groqKey&&window._lastTicketB64?(_releerMode?`<button class="btn-secondary" onclick="seleccionarTodoReleer()">Todas</button><button class="btn-primary btn-releer" onclick="enviarReleer()">Enviar</button>`:`<button class="btn-secondary" onclick="activarReleer()">Releer</button>`):''}
+      ${DB.groqKey&&(window._lastTicketB64||t.imgUrl)?(_releerMode?`<button class="btn-secondary" onclick="seleccionarTodoReleer()">Todas</button><button class="btn-primary btn-releer" onclick="enviarReleer()">Enviar</button>`:`<button class="btn-secondary" onclick="activarReleer()">Releer</button>`):''}
       ${GistSync.isReadOnly()?'':'<button class="btn-primary btn-save" onclick="saveTicket()">Guardar</button>'}
     </div>`;
 }
@@ -945,18 +987,24 @@ function activarReleer(){_releerMode=true;renderTicketEditor();showToast('Toca l
 function seleccionarTodoReleer(){const cards=document.querySelectorAll('[id^="releer-card-"]');const allSel=[...cards].every(c=>c.dataset.selected==='1');cards.forEach(card=>{card.dataset.selected=allSel?'0':'1';card.classList.toggle('selected',!allSel);});}
 
 async function enviarReleer(){
-  if(!DB.groqKey||!window._lastTicketB64){showToast('Necesitas Groq Key e imagen del ticket');return;}
+  const img=window._lastTicketB64||currentTicket?.imgUrl;
+  if(!DB.groqKey||!img){showToast('Necesitas Groq Key e imagen del ticket');return;}
   const confirmed=[];document.querySelectorAll('[id^="releer-card-"]').forEach(card=>{if(card.dataset.selected==='1'){const idx=parseInt(card.dataset.idx);const p=currentTicket.products[idx];if(p)confirmed.push(p);}});
   _releerMode=false;renderTicketEditor();showToast('Enviando a Groq...',3000);
   try{
-    const cL=confirmed.length?'\n\nProductos ya confirmados (NO los cambies):\n'+confirmed.map(p=>`- ${p.name} (${p.qty}u × ${p.unitPrice.toFixed(2)}€)`).join('\n'):'';
-    const d=await groqFetchFallback(DB.groqKey,GROQ_VISION_MODELS,model=>({model,max_tokens:1500,messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/jpeg;base64,'+window._lastTicketB64}},{type:'text',text:'Eres un lector de tickets de supermercado. Extrae TODOS los productos con sus cantidades y precios unitarios.'+cL+'\n\nResponde SOLO con JSON sin markdown: {"store":"nombre","total":0.00,"products":[{"name":"NOMBRE","qty":1,"unitPrice":0.00}]}'}]}]}));
-    if(!DB.groqStats)DB.groqStats={calls:0,firstCall:null,tokensUsed:0};DB.groqStats.calls=(DB.groqStats.calls||0)+1;DB.groqStats.tokensUsed=(DB.groqStats.tokensUsed||0)+(d.usage?.total_tokens||0);if(!DB.groqStats.firstCall)DB.groqStats.firstCall=new Date().toISOString().slice(0,10);S.set('groqStats',JSON.stringify(DB.groqStats));
-    if(d.error){showToast('Error Groq: '+d.error.message,4000);return;}
-    let parsed=parseGroqJSON(d);
-    if(parsed.products&&parsed.products.length>0){const cN=new Set(confirmed.map(p=>p.name.toLowerCase()));const gP=parsed.products.filter(p=>!cN.has((p.name||'').toLowerCase())).map(p=>applyKnowledgeToProduct({name:normalizeProdName(p.name||''),rawName:p.name||'',qty:parseInt(p.qty)||1,unitPrice:parseFloat(p.unitPrice)||0,price:parseFloat(p.unitPrice)||0,finalPrice:parseFloat(((parseFloat(p.unitPrice)||0)*(parseInt(p.qty)||1)).toFixed(2)),confidence:0.9}));currentTicket.products=[...confirmed,...gP];if(parsed.store&&!currentTicket.store)currentTicket.store=parsed.store;if(parsed.total&&!currentTicket.total)currentTicket.total=parsed.total;renderTicketEditor();showToast('Groq añadió '+gP.length+' productos · '+confirmed.length+' confirmados',3500);}
-    else showToast('Groq no encontró productos adicionales',3000);
-  }catch(e){showToast('Error: '+e.message,4000);}
+    const cL=confirmed.length?'\n\nProductos ya confirmados (NO los incluyas en la respuesta):\n'+confirmed.map(p=>`- ${p.rawName||p.name} (${p.qty}u × ${(+p.unitPrice||0).toFixed(2)}€)`).join('\n'):'';
+    const g=await groqVisionExtract(img,cL);
+    if(g.products.length>0){
+      const cN=new Set(confirmed.flatMap(p=>[normalizeKey(p.name||''),normalizeKey(p.rawName||'')]).filter(Boolean));
+      const gP=g.products.filter(p=>!cN.has(normalizeKey(p.name||''))&&!cN.has(normalizeKey(p.rawName||''))).map(p=>applyKnowledgeToProduct(p));
+      currentTicket.products=[...confirmed,...gP];
+      if(g.store&&!currentTicket.store)currentTicket.store=g.store;
+      if(g.total&&!currentTicket.total)currentTicket.total=g.total;
+      if(g.time&&!currentTicket.time)currentTicket.time=g.time;
+      renderTicketEditor();showToast('Groq añadió '+gP.length+' productos · '+confirmed.length+' confirmados',3500);
+    }
+    else showToast('Groq no encontró productos',3000);
+  }catch(e){showToast('Error Groq: '+e.message,5000);}
 }
 
 function saveTicket(){
@@ -974,9 +1022,13 @@ async function mejorarTicket(){
     const b64=await resizeForOCR(file,true); // denoise=true
     setOCRStatus('Leyendo ticket...');
     let ocrText='';
-    try{ocrText=await googleVisionExtract(b64);window._lastTicketB64=b64;}catch(e){console.warn('Vision falló:',e.message);}
-    if(!ocrText){hideOCRLoading();showToast('No se pudo mejorar la lectura',3000);return;}
-    const result=parseTicketText(ocrText);
+    window._lastTicketB64=b64;
+    if(DB.visionKey){try{ocrText=await googleVisionExtract(b64);}catch(e){console.warn('Vision falló:',e.message);}}
+    let result=ocrText?parseTicketText(ocrText):null;
+    if((!result||!(result.products||[]).length)&&DB.groqKey){
+      try{setOCRStatus('Leyendo con IA (Groq)...');const g=await groqVisionExtract(b64);if((g.products||[]).length){if(result){result.products=g.products;result.store=result.store||g.store;result.total=result.total||g.total;}else result=g;}}catch(e){console.warn('Groq visión falló:',e.message);}
+    }
+    if(!result||!(result.products||[]).length){hideOCRLoading();showToast('No se pudo mejorar la lectura',3000);return;}
     result.products=(result.products||[]).map(p=>applyKnowledgeToProduct(p));
     result.type='ticket';
     result.id=currentTicket.id;
